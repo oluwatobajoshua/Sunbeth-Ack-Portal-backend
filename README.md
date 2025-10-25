@@ -124,8 +124,10 @@ The system includes 15 permission categories:
 
 The server can be configured through environment variables or by modifying the configuration in `index.js`:
 
-- **Port**: Default 4000 (configurable via PORT env var)
-- **Database**: SQLite file in `./data/sunbeth.db`
+- **Port**: Default 4000 (configurable via `PORT` env var)
+- **Database Driver**: Select with `DB_DRIVER` (default `sqlite`)
+   - `sqlite` uses sql.js + file at `./data/sunbeth.db`
+   - Placeholders exist for `postgres`, `mysql`, `mssql` (add adapters in `src/db/adapter.js`)
 - **CORS**: Enabled for frontend integration
 
 ## 📊 Logging
@@ -155,6 +157,7 @@ The application can be deployed to:
 ### Environment Variables
 - `PORT` - Server port (default: 4000)
 - `NODE_ENV` - Environment (development/production)
+- `DB_DRIVER` - Database driver (default: `sqlite`)
 
 ## 🔄 Database Management
 

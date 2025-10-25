@@ -11,6 +11,42 @@ const cors = require('cors');
 const initSqlJs = require('sql.js');
 const http = require('http');
 const https = require('https');
+// Optional outbound proxy support (for corporate networks)
+let HttpsProxyAgent = null;
+try { HttpsProxyAgent = require('https-proxy-agent'); } catch {}
+
+// Helper: determine if hostname matches NO_PROXY list
+function shouldBypassProxy(host, noProxyRaw) {
+  try {
+    if (!noProxyRaw) return false;
+    const hostLc = String(host || '').toLowerCase();
+    const parts = String(noProxyRaw).split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+    for (const p of parts) {
+      if (p === '*') return true;
+      if (hostLc === p) return true;
+      if (p.startsWith('.') && (hostLc.endsWith(p) || hostLc === p.slice(1))) return true;
+      // simple suffix match
+      if (hostLc.endsWith(p)) return true;
+    }
+  } catch {}
+  return false;
+}
+
+// Helper: get an Agent for outbound HTTP(S) based on env HTTPS_PROXY/HTTP_PROXY/NO_PROXY
+function getProxyAgent(urlObj) {
+  try {
+    const proto = String(urlObj?.protocol || '').toLowerCase();
+    const host = String(urlObj?.hostname || '').toLowerCase();
+    const httpsProxy = process.env.HTTPS_PROXY || process.env.https_proxy || '';
+    const httpProxy = process.env.HTTP_PROXY || process.env.http_proxy || '';
+    const noProxy = process.env.NO_PROXY || process.env.no_proxy || '';
+    if (shouldBypassProxy(host, noProxy)) return null;
+    const proxyUrl = proto === 'https:' ? (httpsProxy || httpProxy) : (httpProxy || httpsProxy);
+    if (!proxyUrl) return null;
+    if (!HttpsProxyAgent) return null; // dependency not installed; fail open
+    return new HttpsProxyAgent(proxyUrl);
+  } catch { return null; }
+}
 
 // Permission catalog for RBAC matrix (extendable)
 const PERMISSIONS = [
@@ -155,22 +191,15 @@ async function start() {
 
   // Placeholder for moved external user routes (now relocated after app init)
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-  const SQL = await initSqlJs();
-
-  let db;
-  if (fs.existsSync(DB_PATH)) {
-    const filebuffer = fs.readFileSync(DB_PATH);
-    db = new SQL.Database(filebuffer);
-  } else {
-    db = new SQL.Database();
-    try { db.run('PRAGMA foreign_keys = ON'); } catch {}
-    bootstrapSchema(db);
-    persist(db);
-  }
-  try { db.run('PRAGMA foreign_keys = ON'); } catch {}
-
-  // Attempt lightweight migrations for existing databases
-  try { migrateSchema(db); } catch (e) { console.warn('Schema migration warning (non-fatal):', e); }
+  // Initialize database adapter (driver-agnostic). Default: sqlite (sql.js)
+  const { createDbAdapter } = require('./src/db/adapter');
+  const { adapter: db } = await createDbAdapter({
+    driver: process.env.DB_DRIVER || 'sqlite',
+    dataDir: DATA_DIR,
+    dbPath: DB_PATH,
+    bootstrapSchema,
+    migrateSchema
+  });
 
 
   // Utilities (move up so 'one' and 'all' are defined before use)
@@ -178,18 +207,56 @@ async function start() {
     try { db.run(sql, params); persist(db); return true; } catch (e) { console.error(e); return false; }
   };
   const all = (sql, params = []) => {
-    const stmt = db.prepare(sql);
-    const rows = [];
-    try {
-      stmt.bind(params);
-      while (stmt.step()) {
-        const row = stmt.getAsObject();
-        rows.push(row);
-      }
-    } finally { stmt.free(); }
-    return rows;
+    try { return db.query(sql, params) || []; } catch (e) { console.error(e); return []; }
   };
   const one = (sql, params = []) => all(sql, params)[0] || null;
+
+  // Settings helpers (simple key/value via app_settings) - defined early for use in downstream middleware/routes
+  const getSetting = (k, fallback = null) => {
+    try { const r = one('SELECT value FROM app_settings WHERE key=?', [String(k)]); return r ? r.value : fallback; } catch { return fallback; }
+  };
+  const setSetting = (k, v) => { try { db.run('INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value', [String(k), String(v)]); persist(db); return true; } catch { return false; } };
+  const parseJson = (s, d=null) => { try { return s ? JSON.parse(String(s)) : (d==null?{}:d); } catch { return (d==null?{}:d); } };
+  const getTenantSettings = (tenantId) => {
+    try {
+      const r = one('SELECT settings_json FROM tenant_settings WHERE tenant_id=?', [tenantId]);
+      return parseJson(r?.settings_json, {});
+    } catch { return {}; }
+  };
+  const setTenantSettings = (tenantId, obj) => {
+    try {
+      const json = JSON.stringify(obj || {});
+      db.run('INSERT INTO tenant_settings (tenant_id, settings_json) VALUES (?, ?) ON CONFLICT(tenant_id) DO UPDATE SET settings_json=excluded.settings_json', [tenantId, json]);
+      persist(db);
+      return true;
+    } catch { return false; }
+  };
+  const listGlobalFlags = () => {
+    try {
+      const rows = all("SELECT key, value FROM app_settings WHERE key LIKE 'ff_%'");
+      const out = {};
+      for (const r of rows) {
+        const v = String(r.value);
+        out[r.key] = (v === '1' || v.toLowerCase() === 'true');
+      }
+      return out;
+    } catch { return {}; }
+  };
+  const saveGlobalFlags = (flags) => {
+    try {
+      db.run('BEGIN');
+      try {
+        for (const [k, val] of Object.entries(flags || {})) {
+          if (!/^ff_[a-z0-9._-]+$/i.test(k)) continue;
+          const v = val ? '1' : '0';
+          db.run('INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value', [k, v]);
+        }
+        db.run('COMMIT');
+        persist(db);
+        return true;
+      } catch (e) { try { db.run('ROLLBACK'); } catch {}; return false; }
+    } catch { return false; }
+  };
 
   // --- Audit helper ---
   function audit(req, event, email, result, details) {
@@ -263,13 +330,64 @@ async function start() {
   } catch (e) { console.warn('Default role-permissions seed failed (non-fatal):', e?.message || e); }
 
   const app = express();
-  app.use(cors());
+  // Security headers (CSP, HSTS, Referrer-Policy, etc.)
+  try {
+    const helmet = require('helmet');
+    app.use(helmet({
+      contentSecurityPolicy: {
+        useDefaults: true,
+        directives: {
+          ...helmet.contentSecurityPolicy.getDefaultDirectives(),
+          // Adjust as needed for fonts/images; keep strict by default
+          'default-src': ["'self'"],
+          'img-src': ["'self'", 'data:'],
+          'script-src': ["'self'"],
+          'style-src': ["'self'", "'unsafe-inline'"],
+          'connect-src': ["'self'"],
+          'frame-ancestors': ["'none'"],
+          'object-src': ["'none'"],
+          'base-uri': ["'self'"],
+        }
+      },
+      referrerPolicy: { policy: 'no-referrer' },
+      crossOriginEmbedderPolicy: false, // loosen if needed for PDFs/workers
+      crossOriginResourcePolicy: { policy: 'same-site' },
+      hidePoweredBy: true,
+      hsts: { maxAge: 31536000, includeSubDomains: true, preload: false }
+    }));
+  } catch {}
+  // Gzip compression
+  try { app.use(require('compression')()); } catch {}
+  // Strict CORS (allow-list via settings or env ALLOWED_ORIGINS = comma-separated origins)
+  try {
+    app.use(cors({
+      origin: (origin, cb) => {
+        try {
+          const raw = String(getSetting('allowed_origins', process.env.ALLOWED_ORIGINS || '') || '').trim();
+          const list = raw ? raw.split(',').map(s => s.trim()).filter(Boolean) : [];
+          if (!origin || list.length === 0) return cb(null, true); // allow same-origin or if no list set
+          return cb(null, list.includes(origin));
+        } catch { return cb(null, true); }
+      },
+      credentials: true,
+      methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
+      allowedHeaders: ['Content-Type','Authorization','X-Requested-With']
+    }));
+  } catch { app.use(cors()); }
+  // JSON parsing with sane limit
   app.use(express.json({ limit: '2mb' }));
+  // Basic API rate limiting (custom endpoints may implement their own as well)
+  try {
+    const rateLimit = require('express-rate-limit');
+    const limiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 1000, standardHeaders: true, legacyHeaders: false });
+    app.use('/api/', limiter);
+  } catch {}
   
   // Request logging middleware
   app.use((req, res, next) => {
     req.requestId = generateRequestId();
-    req.logger = createLogger(req.requestId);
+  req.logger = createLogger(req.requestId);
+  res.setHeader('X-Request-Id', req.requestId);
     
     const startTime = Date.now();
     req.logger.info('request', `${req.method} ${req.url}`, {
@@ -305,17 +423,563 @@ async function start() {
     next();
   });
 
-  // Settings helpers (simple key/value via app_settings)
-  const getSetting = (k, fallback = null) => {
-    try { const r = one('SELECT value FROM app_settings WHERE key=?', [String(k)]); return r ? r.value : fallback; } catch { return fallback; }
-  };
-  const setSetting = (k, v) => { try { db.run('INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value', [String(k), String(v)]); persist(db); return true; } catch { return false; } };
+  // Tenant resolver middleware: resolve tenant by custom domain or fallback to owner
+  app.use((req, _res, next) => {
+    try {
+      // Allow overriding host via header for proxies/tests
+      const rawHost = (req.headers['x-tenant-domain'] || req.headers.host || '').toString();
+      const host = rawHost.replace(/:\d+$/, '').toLowerCase();
+      // 1) Match explicit custom domain
+      let tenant = null;
+      if (host) {
+        tenant = one(
+          `SELECT t.id, t.name, t.code, t.parent_id as parentId, t.is_active as isActive, t.is_owner as isOwner
+           FROM tenants t
+           JOIN tenant_domains d ON d.tenant_id=t.id
+           WHERE LOWER(d.domain)=LOWER(?)
+           LIMIT 1`,
+          [host]
+        );
+      }
+      // 2) Optional: subdomain pattern like CODE.example.com (behind a flag)
+      if (!tenant) {
+        const enableSubdomain = getSetting('tenant_subdomain_enabled', '0') === '1';
+        const baseDomain = getSetting('tenant_base_domain', '');
+        if (enableSubdomain && host && baseDomain && host.endsWith(`.${baseDomain.toLowerCase()}`)) {
+          const sub = host.slice(0, -(baseDomain.length + 1));
+          if (sub && /^[a-z0-9-_.]+$/.test(sub)) {
+            tenant = one(
+              `SELECT id, name, code, parent_id as parentId, is_active as isActive, is_owner as isOwner
+               FROM tenants WHERE UPPER(code)=UPPER(?) LIMIT 1`,
+              [sub]
+            );
+          }
+        }
+      }
+      // 3) Fallback to owner tenant
+      if (!tenant) {
+        tenant = one(`SELECT id, name, code, parent_id as parentId, is_active as isActive, is_owner as isOwner FROM tenants WHERE is_owner=1 LIMIT 1`);
+      }
+      // Attach tenant + theme
+      let theme = null;
+      try {
+        const r = one(`SELECT theme_json FROM tenant_settings WHERE tenant_id=?`, [tenant?.id || -1]);
+        if (r && r.theme_json) {
+          try { theme = JSON.parse(String(r.theme_json)); } catch { theme = null; }
+        }
+      } catch {}
+      req.tenant = tenant ? { ...tenant, isActive: !!tenant.isActive, isOwner: !!tenant.isOwner, domain: host, theme } : null;
+    } catch (e) {
+      req.tenant = null;
+    }
+    next();
+  });
+
+  // Auto-mount module routers discovered under src/modules/* if present
+  let listModules = (_opts) => [];
+  let _mountModules = null;
+  try {
+    const mod = require('./src/modules/loader');
+    listModules = mod.listModules || listModules;
+    _mountModules = mod.loadAndMountModules || null;
+  } catch (e) {
+    console.warn('[modules] loader missing:', e?.message || e);
+  }
+  try {
+    if (_mountModules) _mountModules(app, { featureFlagGetter: getSetting });
+  } catch (e) {
+    console.warn('[modules] auto-mount skipped:', e?.message || e);
+  }
+  // Ensure owner tenant has all discovered modules enabled by default (commercially exempt)
+  try {
+    const owner = one('SELECT id FROM tenants WHERE is_owner=1 LIMIT 1');
+    if (owner?.id) {
+      const modsAtBoot = listModules({ featureFlagGetter: getSetting });
+      for (const m of modsAtBoot) {
+        try {
+          db.run('INSERT INTO tenant_modules (tenant_id, module_name, enabled) VALUES (?, ?, 1) ON CONFLICT(tenant_id, module_name) DO NOTHING', [owner.id, m.name]);
+        } catch {}
+      }
+      persist(db);
+    }
+  } catch {}
+  // Expose modules catalog for UI
+  app.get('/api/modules', (_req, res) => {
+    const mods = listModules({ featureFlagGetter: getSetting });
+    res.json({ modules: mods });
+  });
+    // Tenant-aware modules: intersect feature flags with tenant entitlements
+    app.get('/api/tenant/modules', (req, res) => {
+      try {
+        const mods = listModules({ featureFlagGetter: getSetting });
+        const tenantId = req?.tenant?.id || null;
+        if (!tenantId) return res.json({ modules: [] });
+        const rows = all('SELECT module_name FROM tenant_modules WHERE tenant_id=? AND enabled=1', [tenantId]);
+        const allowed = new Set(rows.map(r => String(r.module_name)));
+        const visible = mods
+          .filter(m => allowed.has(m.name))
+          .map(m => ({ ...m, enabled: true }));
+        res.json({ modules: visible });
+      } catch (e) { res.status(500).json({ error: 'list_failed' }); }
+    });
+    // Current tenant info
+    app.get('/api/tenant', (req, res) => {
+      const t = req.tenant;
+      if (!t) return res.status(404).json({ error: 'tenant_not_found' });
+      res.json({ tenant: t });
+    });
+    // Super Admin Guard for /api/admin/* endpoints
+    function adminGuard(req, res, next) {
+      try {
+        const hdr = (req.headers['x-user-email'] || req.headers['x-admin-email'] || '').toString().trim().toLowerCase();
+        const qp = (req.query && req.query.adminEmail ? String(req.query.adminEmail) : '').trim().toLowerCase();
+        const email = hdr || qp || '';
+        const roles = resolveUserRoles(email, db);
+        if (roles.includes('SuperAdmin')) return next();
+        return res.status(403).json({ error: 'forbidden', reason: 'superadmin_required' });
+      } catch (e) { return res.status(403).json({ error: 'forbidden' }); }
+    }
+    app.use('/api/admin', adminGuard);
+
+  // Super Admin: Tenants & Licensing
+    app.get('/api/admin/tenants', (_req, res) => {
+      try {
+        const rows = all(`SELECT t.id, t.name, t.code, t.is_active as isActive, t.is_owner as isOwner, t.parent_id as parentId,
+          (SELECT COUNT(*) FROM tenant_modules tm WHERE tm.tenant_id=t.id AND tm.enabled=1) as modulesEnabled,
+          (SELECT COUNT(*) FROM licenses l WHERE l.tenant_id=t.id AND l.status='active') as activeLicenses
+        FROM tenants t ORDER BY t.is_owner DESC, t.name ASC`);
+        res.json({ tenants: rows.map(r => ({
+          id: r.id, name: r.name, code: r.code, isActive: !!r.isActive, isOwner: !!r.isOwner, parentId: r.parentId || null,
+          modulesEnabled: Number(r.modulesEnabled || 0), activeLicenses: Number(r.activeLicenses || 0)
+        })) });
+      } catch (e) { res.status(500).json({ error: 'list_failed' }); }
+    });
+    app.post('/api/admin/tenants', (req, res) => {
+      const { name, code, parentId=null, isActive=true, isOwner=false } = req.body || {};
+      if (!name || !code) return res.status(400).json({ error: 'name_code_required' });
+      try {
+        db.run('INSERT INTO tenants (name, code, parent_id, is_active, is_owner) VALUES (?, ?, ?, ?, ?)', [String(name), String(code).toUpperCase(), parentId, isActive?1:0, isOwner?1:0]);
+        const id = one('SELECT last_insert_rowid() AS id')?.id;
+        persist(db);
+        res.json({ id });
+      } catch (e) { res.status(500).json({ error: 'create_failed' }); }
+    });
+    app.put('/api/admin/tenants/:id', (req, res) => {
+      const id = Number(req.params.id);
+      const { name, code, parentId, isActive, isOwner } = req.body || {};
+      try {
+        const cur = one('SELECT * FROM tenants WHERE id=?', [id]);
+        if (!cur) return res.status(404).json({ error: 'not_found' });
+        const next = {
+          name: name!=null? String(name): cur.name,
+          code: code!=null? String(code).toUpperCase(): cur.code,
+          parent_id: parentId!==undefined? parentId: cur.parent_id,
+          is_active: isActive!==undefined? (isActive?1:0): cur.is_active,
+          is_owner: isOwner!==undefined? (isOwner?1:0): cur.is_owner,
+        };
+        db.run('UPDATE tenants SET name=?, code=?, parent_id=?, is_active=?, is_owner=? WHERE id=?', [next.name, next.code, next.parent_id, next.is_active, next.is_owner, id]);
+        persist(db);
+        res.json({ ok: true });
+      } catch (e) { res.status(500).json({ error: 'update_failed' }); }
+    });
+    // Tenant module entitlements
+    app.get('/api/admin/tenants/:id/modules', (req, res) => {
+      try {
+        const tenantId = Number(req.params.id);
+        const mods = listModules({ featureFlagGetter: getSetting });
+        const rows = all('SELECT module_name, enabled FROM tenant_modules WHERE tenant_id=?', [tenantId]);
+        const byName = new Map(rows.map(r => [r.module_name, !!r.enabled]));
+  const merged = mods.map(m => ({ ...m, enabled: byName.has(m.name) ? Boolean(byName.get(m.name)) : false }));
+        res.json({ modules: merged });
+      } catch (e) { res.status(500).json({ error: 'list_failed' }); }
+    });
+    app.put('/api/admin/tenants/:id/modules', (req, res) => {
+      try {
+        const tenantId = Number(req.params.id);
+        const { module, enabled } = req.body || {};
+        if (!module || typeof enabled !== 'boolean') return res.status(400).json({ error: 'module_and_enabled_required' });
+        db.run('INSERT INTO tenant_modules (tenant_id, module_name, enabled) VALUES (?, ?, ?) ON CONFLICT(tenant_id, module_name) DO UPDATE SET enabled=excluded.enabled', [tenantId, String(module), enabled?1:0]);
+        persist(db);
+        res.json({ ok: true });
+      } catch (e) { res.status(500).json({ error: 'save_failed' }); }
+    });
+    // Tenant licenses
+    app.get('/api/admin/tenants/:id/licenses', (req, res) => {
+      try {
+        const tenantId = Number(req.params.id);
+        const rows = all('SELECT id, plan, seats, status, is_free as isFree, valid_from as validFrom, valid_to as validTo FROM licenses WHERE tenant_id=? ORDER BY created_at DESC', [tenantId]);
+        res.json({ licenses: rows.map(r => ({ id: r.id, plan: r.plan, seats: r.seats, status: r.status, isFree: !!r.isFree, validFrom: r.validFrom, validTo: r.validTo })) });
+      } catch (e) { res.status(500).json({ error: 'list_failed' }); }
+    });
+    app.post('/api/admin/tenants/:id/licenses', (req, res) => {
+      try {
+        const tenantId = Number(req.params.id);
+        const { plan, seats=0, status='active', isFree=false, validFrom=null, validTo=null } = req.body || {};
+        db.run('INSERT INTO licenses (tenant_id, plan, seats, status, is_free, valid_from, valid_to) VALUES (?, ?, ?, ?, ?, ?, ?)', [tenantId, plan || null, Number(seats)||0, String(status), isFree?1:0, validFrom, validTo]);
+        const id = one('SELECT last_insert_rowid() as id')?.id;
+        persist(db);
+        res.json({ id });
+      } catch (e) { res.status(500).json({ error: 'create_failed' }); }
+    });
+    // Theme catalog admin
+    const parseTheme = (obj) => {
+      const safe = (x) => (x && typeof x === 'object') ? x : {};
+      return { light: safe(obj?.light), dark: safe(obj?.dark) };
+    };
+    app.get('/api/admin/themes', (_req, res) => {
+      try {
+        const rows = all('SELECT id, name, description, base_theme_id as baseThemeId, is_system as isSystem, created_at as createdAt, updated_at as updatedAt FROM themes ORDER BY is_system DESC, name ASC');
+        res.json({ themes: rows.map(r => ({ id: r.id, name: r.name, description: r.description, baseThemeId: r.baseThemeId, isSystem: !!r.isSystem, createdAt: r.createdAt, updatedAt: r.updatedAt })) });
+      } catch { res.status(500).json({ error: 'list_failed' }); }
+    });
+    app.post('/api/admin/themes', (req, res) => {
+      try {
+        const { name, description=null, light=null, dark=null, baseThemeId=null } = req.body || {};
+        const n = String(name || '').trim();
+        if (!n) return res.status(400).json({ error: 'name_required' });
+        const now = new Date().toISOString();
+        db.run('INSERT INTO themes (name, description, light_json, dark_json, base_theme_id, is_system, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?)', [n, description, light?JSON.stringify(light):null, dark?JSON.stringify(dark):null, baseThemeId, now, now]);
+        const id = one('SELECT last_insert_rowid() as id')?.id;
+        persist(db);
+        res.json({ id });
+      } catch { res.status(500).json({ error: 'create_failed' }); }
+    });
+    app.get('/api/admin/themes/:id', (req, res) => {
+      try {
+        const id = Number(req.params.id);
+        const r = one('SELECT id, name, description, light_json, dark_json, base_theme_id as baseThemeId, is_system as isSystem, created_at as createdAt, updated_at as updatedAt FROM themes WHERE id=?', [id]);
+        if (!r) return res.status(404).json({ error: 'not_found' });
+        res.json({ id: r.id, name: r.name, description: r.description, baseThemeId: r.baseThemeId, isSystem: !!r.isSystem, createdAt: r.createdAt, updatedAt: r.updatedAt, light: r.light_json?JSON.parse(r.light_json):null, dark: r.dark_json?JSON.parse(r.dark_json):null });
+      } catch { res.status(500).json({ error: 'load_failed' }); }
+    });
+    app.put('/api/admin/themes/:id', (req, res) => {
+      try {
+        const id = Number(req.params.id);
+        const { name, description, light, dark } = req.body || {};
+        const cur = one('SELECT id FROM themes WHERE id=?', [id]);
+        if (!cur) return res.status(404).json({ error: 'not_found' });
+        const now = new Date().toISOString();
+        db.run('UPDATE themes SET name=COALESCE(?, name), description=COALESCE(?, description), light_json=COALESCE(?, light_json), dark_json=COALESCE(?, dark_json), updated_at=? WHERE id=?', [name || null, description || null, light?JSON.stringify(light):null, dark?JSON.stringify(dark):null, now, id]);
+        persist(db);
+        res.json({ ok: true });
+      } catch { res.status(500).json({ error: 'update_failed' }); }
+    });
+    app.delete('/api/admin/themes/:id', (req, res) => {
+      try {
+        const id = Number(req.params.id);
+        db.run('DELETE FROM themes WHERE id=? AND is_system=0', [id]);
+        persist(db);
+        res.json({ ok: true });
+      } catch { res.status(500).json({ error: 'delete_failed' }); }
+    });
+    app.post('/api/admin/themes/:id/clone', (req, res) => {
+      try {
+        const id = Number(req.params.id);
+        const src = one('SELECT name, description, light_json, dark_json FROM themes WHERE id=?', [id]);
+        if (!src) return res.status(404).json({ error: 'not_found' });
+        const name = String(req.body?.name || `${src.name} Copy`).trim();
+        const now = new Date().toISOString();
+        db.run('INSERT INTO themes (name, description, light_json, dark_json, base_theme_id, is_system, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?)', [name, src.description, src.light_json, src.dark_json, id, now, now]);
+        const newId = one('SELECT last_insert_rowid() as id')?.id;
+        persist(db);
+        res.json({ id: newId });
+      } catch { res.status(500).json({ error: 'clone_failed' }); }
+    });
+    // Theme assignments admin
+    app.get('/api/admin/theme-assignments', (req, res) => {
+      try {
+        const targetType = String(req.query.targetType || '').trim();
+        const targetId = (req.query.targetId != null) ? String(req.query.targetId) : null;
+        const rows = targetType
+          ? all('SELECT ta.id, ta.theme_id as themeId, ta.target_type as targetType, ta.target_id as targetId, ta.enabled, t.name as themeName FROM theme_assignments ta JOIN themes t ON t.id=ta.theme_id WHERE ta.target_type=? AND (ta.target_id IS ? OR ta.target_id=?)', [targetType, targetId, targetId])
+          : all('SELECT ta.id, ta.theme_id as themeId, ta.target_type as targetType, ta.target_id as targetId, ta.enabled, t.name as themeName FROM theme_assignments ta JOIN themes t ON t.id=ta.theme_id ORDER BY ta.id DESC');
+        res.json({ assignments: rows.map(r => ({ id: r.id, themeId: r.themeId, themeName: r.themeName, targetType: r.targetType, targetId: r.targetId, enabled: !!r.enabled })) });
+      } catch { res.status(500).json({ error: 'list_failed' }); }
+    });
+    app.put('/api/admin/theme-assignments', (req, res) => {
+      try {
+        const { themeId, targetType, targetId=null, enabled=true } = req.body || {};
+        if (!themeId || !targetType) return res.status(400).json({ error: 'invalid_payload' });
+        db.run('INSERT INTO theme_assignments (theme_id, target_type, target_id, enabled) VALUES (?, ?, ?, ?) ', [Number(themeId), String(targetType), targetId!=null?String(targetId):null, enabled?1:0]);
+        const id = one('SELECT last_insert_rowid() as id')?.id;
+        persist(db);
+        res.json({ id });
+      } catch { res.status(500).json({ error: 'save_failed' }); }
+    });
+    app.delete('/api/admin/theme-assignments/:id', (req, res) => {
+      try {
+        const id = Number(req.params.id);
+        db.run('DELETE FROM theme_assignments WHERE id=?', [id]);
+        persist(db);
+        res.json({ ok: true });
+      } catch { res.status(500).json({ error: 'delete_failed' }); }
+    });
+
+    // Feature Flags: Global & Tenant Overrides
+    app.get('/api/admin/feature-flags', (_req, res) => {
+      try { res.json({ flags: listGlobalFlags() }); } catch { res.status(500).json({ error: 'list_failed' }); }
+    });
+    app.put('/api/admin/feature-flags', (req, res) => {
+      try {
+        const flags = (req.body && req.body.flags) ? req.body.flags : req.body;
+        if (!flags || typeof flags !== 'object') return res.status(400).json({ error: 'invalid_payload' });
+        const ok = saveGlobalFlags(flags);
+        if (!ok) return res.status(500).json({ error: 'save_failed' });
+        res.json({ ok: true });
+      } catch { res.status(500).json({ error: 'save_failed' }); }
+    });
+    app.get('/api/admin/tenants/:id/feature-flags', (req, res) => {
+      try {
+        const tenantId = Number(req.params.id);
+        const s = getTenantSettings(tenantId);
+        const flags = (s && s.flags && typeof s.flags === 'object') ? s.flags : {};
+        res.json({ flags });
+      } catch { res.status(500).json({ error: 'load_failed' }); }
+    });
+    app.put('/api/admin/tenants/:id/feature-flags', (req, res) => {
+      try {
+        const tenantId = Number(req.params.id);
+        const payload = (req.body && req.body.flags) ? req.body.flags : req.body;
+        if (!payload || typeof payload !== 'object') return res.status(400).json({ error: 'invalid_payload' });
+        const cur = getTenantSettings(tenantId);
+        const next = { ...(cur || {}), flags: { ...(cur?.flags || {}), ...payload } };
+        if (!setTenantSettings(tenantId, next)) return res.status(500).json({ error: 'save_failed' });
+        res.json({ ok: true });
+      } catch { res.status(500).json({ error: 'save_failed' }); }
+    });
+
+    // Super Admin: Roles management (move away from env-only)
+    app.get('/api/admin/roles', (_req, res) => {
+      try {
+        const rows = all('SELECT LOWER(email) as email, role, createdAt FROM roles ORDER BY LOWER(email), role');
+        // Aggregate roles per email for convenience
+        const map = new Map();
+        for (const r of rows) {
+          const e = String(r.email);
+          if (!map.has(e)) map.set(e, { email: e, roles: [] });
+          map.get(e).roles.push(r.role);
+        }
+        res.json({ users: Array.from(map.values()) });
+      } catch (e) { res.status(500).json({ error: 'list_failed' }); }
+    });
+    app.post('/api/admin/roles', (req, res) => {
+      try {
+        const { email, role } = req.body || {};
+        const e = String(email || '').trim().toLowerCase();
+        const r = String(role || '').trim();
+        if (!e || !e.includes('@') || !r) return res.status(400).json({ error: 'invalid_payload' });
+        const now = new Date().toISOString();
+        db.run('INSERT OR IGNORE INTO roles (email, role, createdAt) VALUES (?, ?, ?)', [e, r, now]);
+        persist(db);
+        res.json({ ok: true });
+      } catch (e) { res.status(500).json({ error: 'save_failed' }); }
+    });
+    app.delete('/api/admin/roles', (req, res) => {
+      try {
+        const e = String((req.query.email || req.body?.email || '')).trim().toLowerCase();
+        const r = String((req.query.role || req.body?.role || '')).trim();
+        if (!e || !e.includes('@') || !r) return res.status(400).json({ error: 'invalid_payload' });
+        db.run('DELETE FROM roles WHERE LOWER(email)=LOWER(?) AND role=?', [e, r]);
+        persist(db);
+        res.json({ ok: true });
+      } catch (e) { res.status(500).json({ error: 'delete_failed' }); }
+    });
+
+    // Super Admin: Global settings management (safe, non-secret)
+    const SETTINGS_WHITELIST = new Set([
+      'external_support_enabled',
+      'allowed_origins',
+      'tenant_base_domain',
+      'tenant_subdomain_enabled',
+      'frontend_base_url'
+    ]);
+    app.get('/api/admin/settings', (_req, res) => {
+      try {
+        const rows = all('SELECT key, value FROM app_settings');
+        const out = {};
+        for (const r of rows) {
+          const k = String(r.key);
+          if (!SETTINGS_WHITELIST.has(k)) continue;
+          let v = r.value;
+          if (k.endsWith('_enabled')) v = (String(v) === '1' || String(v).toLowerCase() === 'true');
+          out[k] = v;
+        }
+        res.json({ settings: out });
+      } catch (e) { res.status(500).json({ error: 'list_failed' }); }
+    });
+    app.put('/api/admin/settings', (req, res) => {
+      try {
+        const payload = (req.body && req.body.settings) ? req.body.settings : req.body;
+        if (!payload || typeof payload !== 'object') return res.status(400).json({ error: 'invalid_payload' });
+        db.run('BEGIN');
+        try {
+          for (const [k, val] of Object.entries(payload)) {
+            if (!SETTINGS_WHITELIST.has(k)) continue;
+            const v = (k.endsWith('_enabled')) ? (val ? '1' : '0') : String(val ?? '');
+            db.run('INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value', [k, v]);
+          }
+          db.run('COMMIT');
+          persist(db);
+        } catch (e) { try { db.run('ROLLBACK'); } catch {} ; throw e; }
+        res.json({ ok: true });
+      } catch (e) { res.status(500).json({ error: 'save_failed' }); }
+    });
+
+    // Effective theme resolution
+    function deepMerge(a, b) {
+      if (!a) return b;
+      if (!b) return a;
+      const out = Array.isArray(a) ? [...a] : { ...a };
+      for (const [k, v] of Object.entries(b)) {
+        if (v && typeof v === 'object' && !Array.isArray(v)) {
+          out[k] = deepMerge(out[k] || {}, v);
+        } else {
+          out[k] = v;
+        }
+      }
+      return out;
+    }
+    function safeParse(json) { try { return json ? JSON.parse(String(json)) : null; } catch { return null; } }
+    function defaultLight() {
+      return { cssVars: { '--primary': '#0c5343', '--accent': '#f64500', '--bg': '#f7f8fa', '--bg-elevated': '#ffffff', '--card': '#ffffff', '--muted': '#6b6b6b' } };
+    }
+    function defaultDark() {
+      return { cssVars: { '--bg': '#111a17', '--bg-elevated': '#16211d', '--card': '#182520', '--muted': '#a5b2ad' }, darkMode: true };
+    }
+    app.get('/api/theme/effective', (req, res) => {
+      try {
+        const tenantId = req?.tenant?.id || null;
+        const module = String(req.query.module || '').trim();
+        const plugin = String(req.query.plugin || '').trim();
+        let light = defaultLight();
+        let dark = defaultDark();
+        // Intended precedence: module > plugin > tenant > global
+        // Implementation note: later overlays win, so apply in reverse order: global -> tenant -> plugin -> module
+        const overlayThemeById = (themeId) => {
+          const thr = one('SELECT light_json, dark_json FROM themes WHERE id=?', [themeId]);
+          const l = safeParse(thr?.light_json); const d = safeParse(thr?.dark_json);
+          if (l) light = deepMerge(light, l);
+          if (d) dark = deepMerge(dark, d);
+        };
+
+        // 1) Global
+        const rowsGlobal = all(
+          'SELECT theme_id FROM theme_assignments WHERE target_type=? AND (target_id IS NULL OR target_id="") AND enabled=1',
+          ['global']
+        );
+        for (const r of rowsGlobal) overlayThemeById(r.theme_id);
+
+        // 2) Tenant (or fallback legacy tenant_settings if no explicit tenant assignment)
+        if (tenantId != null) {
+          const tenantRows = all(
+            'SELECT theme_id FROM theme_assignments WHERE target_type=? AND target_id=? AND enabled=1',
+            ['tenant', String(tenantId)]
+          );
+          if (tenantRows.length > 0) {
+            for (const r of tenantRows) overlayThemeById(r.theme_id);
+          } else {
+            // Fallback to legacy tenant theme JSON if no explicit assignment exists
+            const ts = one('SELECT theme_json FROM tenant_settings WHERE tenant_id=?', [tenantId]);
+            const t = safeParse(ts?.theme_json);
+            if (t) { light = deepMerge(light, t); }
+          }
+        }
+
+        // 3) Plugin
+        if (plugin) {
+          const rowsPlugin = all(
+            'SELECT theme_id FROM theme_assignments WHERE target_type=? AND target_id=? AND enabled=1',
+            ['plugin', plugin]
+          );
+          for (const r of rowsPlugin) overlayThemeById(r.theme_id);
+        }
+
+        // 4) Module (highest precedence)
+        if (module) {
+          const rowsModule = all(
+            'SELECT theme_id FROM theme_assignments WHERE target_type=? AND target_id=? AND enabled=1',
+            ['module', module]
+          );
+          for (const r of rowsModule) overlayThemeById(r.theme_id);
+        }
+
+        return res.json({ theme: { light, dark } });
+      } catch (e) { res.status(500).json({ error: 'resolve_failed' }); }
+    });
+    // Effective flags for current tenant
+    app.get('/api/flags/effective', (req, res) => {
+      try {
+        const tenantId = req?.tenant?.id || null;
+        const globalFlags = listGlobalFlags();
+        let flags = { ...globalFlags };
+        if (tenantId != null) {
+          const s = getTenantSettings(tenantId);
+          if (s && s.flags && typeof s.flags === 'object') {
+            flags = { ...flags, ...s.flags };
+          }
+        }
+        res.json({ flags });
+      } catch { res.status(500).json({ error: 'resolve_failed' }); }
+    });
+    // Tenant domains admin
+    app.get('/api/admin/tenants/:id/domains', (req, res) => {
+      try {
+        const tenantId = Number(req.params.id);
+        const rows = all('SELECT id, domain, is_primary as isPrimary, verified, added_at as addedAt FROM tenant_domains WHERE tenant_id=? ORDER BY is_primary DESC, domain ASC', [tenantId]);
+        res.json({ domains: rows.map(r => ({ id: r.id, domain: r.domain, isPrimary: !!r.isPrimary, verified: !!r.verified, addedAt: r.addedAt })) });
+      } catch { res.status(500).json({ error: 'list_failed' }); }
+    });
+    app.post('/api/admin/tenants/:id/domains', (req, res) => {
+      try {
+        const tenantId = Number(req.params.id);
+        const { domain, isPrimary=false } = req.body || {};
+        if (!domain || !/^[a-z0-9.-]+$/i.test(String(domain))) return res.status(400).json({ error: 'invalid_domain' });
+        const now = new Date().toISOString();
+        db.run('INSERT INTO tenant_domains (tenant_id, domain, is_primary, verified, added_at) VALUES (?, ?, ?, 0, ?)', [tenantId, String(domain).toLowerCase(), isPrimary?1:0, now]);
+        // Ensure only one primary
+        if (isPrimary) db.run('UPDATE tenant_domains SET is_primary=0 WHERE tenant_id=? AND LOWER(domain)<>LOWER(?)', [tenantId, String(domain).toLowerCase()]);
+        const id = one('SELECT last_insert_rowid() as id')?.id;
+        persist(db);
+        res.json({ id });
+      } catch (e) { res.status(500).json({ error: 'create_failed' }); }
+    });
+    app.delete('/api/admin/tenants/:id/domains/:domainId', (req, res) => {
+      try {
+        const tenantId = Number(req.params.id);
+        const domainId = Number(req.params.domainId);
+        db.run('DELETE FROM tenant_domains WHERE tenant_id=? AND id=?', [tenantId, domainId]);
+        persist(db);
+        res.json({ ok: true });
+      } catch { res.status(500).json({ error: 'delete_failed' }); }
+    });
+    // Tenant theme admin
+    app.get('/api/admin/tenants/:id/theme', (req, res) => {
+      try {
+        const tenantId = Number(req.params.id);
+        const r = one('SELECT theme_json FROM tenant_settings WHERE tenant_id=?', [tenantId]);
+        const theme = r?.theme_json ? (function(){ try { return JSON.parse(String(r.theme_json)); } catch { return null; } })() : null;
+        res.json({ theme });
+      } catch { res.status(500).json({ error: 'load_failed' }); }
+    });
+    app.put('/api/admin/tenants/:id/theme', (req, res) => {
+      try {
+        const tenantId = Number(req.params.id);
+        const theme = req.body?.theme || req.body || {};
+        const json = JSON.stringify(theme || {});
+        db.run('INSERT INTO tenant_settings (tenant_id, theme_json) VALUES (?, ?) ON CONFLICT(tenant_id) DO UPDATE SET theme_json=excluded.theme_json', [tenantId, json]);
+        persist(db);
+        res.json({ ok: true });
+      } catch { res.status(500).json({ error: 'save_failed' }); }
+    });
+  // (end modules section)
+
 
   // --- External User Helpers & Routes ---
   const multer = require('multer');
   const upload = multer({ storage: multer.memoryStorage() });
   const csvParse = require('csv-parse/sync');
   const crypto = require('crypto');
+  const mime = require('mime-types');
   // In-memory store for onboarding tokens (for demo; use DB in production)
   const onboardingTokens = new Map(); // email -> { token, expiresAt }
   async function sendOnboardingEmail(email, name, link) {
@@ -435,6 +1099,16 @@ async function start() {
   });
 
   app.post('/api/external-users/login', async (req, res) => {
+    // Validate request
+    try {
+      const Ajv = require('ajv');
+      const addFormats = require('ajv-formats');
+      const ajv = new Ajv({ allErrors: true, removeAdditional: true });
+      addFormats(ajv);
+      const schema = { type: 'object', required: ['email','password'], additionalProperties: false, properties: { email: { type: 'string', format: 'email' }, password: { type: 'string', minLength: 8 } } };
+      const valid = ajv.validate(schema, req.body || {});
+      if (!valid) return res.status(400).json({ error: 'invalid_request', details: ajv.errors });
+    } catch {}
     if (getSetting('external_support_enabled','0') !== '1') return res.status(404).json({ error: 'not_found' });
     try {
       const { email, password } = req.body || {};
@@ -471,6 +1145,16 @@ async function start() {
   });
 
   app.post('/api/external-users/set-password', async (req, res) => {
+    // Validate request
+    try {
+      const Ajv = require('ajv');
+      const addFormats = require('ajv-formats');
+      const ajv = new Ajv({ allErrors: true, removeAdditional: true });
+      addFormats(ajv);
+      const schema = { type: 'object', required: ['email','token','password'], additionalProperties: false, properties: { email: { type: 'string', format: 'email' }, token: { type: 'string', minLength: 6 }, password: { type: 'string', minLength: 8 } } };
+      const valid = ajv.validate(schema, req.body || {});
+      if (!valid) return res.status(400).json({ error: 'invalid_request', details: ajv.errors });
+    } catch {}
     if (getSetting('external_support_enabled','0') !== '1') return res.status(404).json({ error: 'not_found' });
     try {
       const { email, token, password } = req.body || {};
@@ -540,7 +1224,7 @@ async function start() {
             const token = crypto.randomBytes(32).toString('hex');
             const expiresAt = Date.now() + 1000 * 60 * 60 * 48; // 48 hours
             onboardingTokens.set(email, { token, expiresAt });
-            const baseUrl = (process.env.FRONTEND_BASE_URL || req.headers.origin || (`${req.protocol}://${req.headers.host}`));
+        const baseUrl = (getSetting('frontend_base_url', process.env.FRONTEND_BASE_URL || '') || req.headers.origin || (`${req.protocol}://${req.headers.host}`));
             const link = `${String(baseUrl).replace(/\/$/,'')}/onboard?email=${encodeURIComponent(email)}&token=${token}`;
             onboarding.push({ email, name: row.name || '', link });
           }
@@ -559,6 +1243,251 @@ async function start() {
     } catch (e) {
       res.status(500).json({ error: 'bulk_upload_failed', details: e.message });
     }
+  });
+
+  // --- Local File Uploads (PDF backup path) ---
+  // Table: uploaded_files
+  // Endpoint: POST /api/files/upload (multipart/form-data, field: file)
+  // Returns: { id, name, size, mime, sha256, url }
+  app.post('/api/files/upload', upload.single('file'), async (req, res) => {
+    try {
+      if (!req.file) return res.status(400).json({ error: 'no_file_uploaded' });
+      const MAX_SIZE = Number(process.env.LOCAL_UPLOAD_MAX_BYTES || (100 * 1024 * 1024)); // 100MB default
+      if (req.file.size > MAX_SIZE) return res.status(400).json({ error: 'file_too_large', max: MAX_SIZE });
+
+      // Only allow PDFs by default (can be expanded later)
+      const origName = req.file.originalname || 'file';
+      const guessed = req.file.mimetype || mime.lookup(origName) || 'application/octet-stream';
+      const isPdf = /pdf/i.test(guessed) || /\.pdf$/i.test(origName || '');
+      if (!isPdf) return res.status(400).json({ error: 'unsupported_type', allowed: 'application/pdf' });
+
+      // Compute sha256 for dedupe/trace
+      const sha256 = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
+
+      // Dedupe by sha256
+      try {
+        const exist = one('SELECT id, rel_path, mime, original_name FROM uploaded_files WHERE sha256=? LIMIT 1', [sha256]);
+        if (exist) {
+          const apiUrl = `/api/files/${exist.id}`;
+          return res.json({ id: exist.id, name: exist.original_name, size: req.file.size, mime: exist.mime, sha256, url: apiUrl, deduped: true });
+        }
+      } catch {}
+
+      // Prepare storage path
+      const uploadsDir = path.join(DATA_DIR, 'uploads');
+      if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+      const y = new Date().getUTCFullYear();
+      const m = String(new Date().getUTCMonth() + 1).padStart(2, '0');
+      const subDir = path.join(uploadsDir, String(y), String(m));
+      if (!fs.existsSync(subDir)) fs.mkdirSync(subDir, { recursive: true });
+
+      // Random filename to avoid collisions; preserve .pdf extension
+      const rid = crypto.randomBytes(8).toString('hex');
+      const storedName = `${rid}.pdf`;
+      const fullPath = path.join(subDir, storedName);
+      fs.writeFileSync(fullPath, req.file.buffer);
+
+      // Persist metadata
+      const now = new Date().toISOString();
+      const uploadedBy = String(req.headers['x-user-email'] || req.headers['x-admin-email'] || '').toLowerCase() || null;
+      const relPath = path.relative(DATA_DIR, fullPath).replace(/\\/g, '/');
+      const urlPath = `/api/files/by-path/${encodeURIComponent(relPath)}`; // internal convenience
+      // Insert into uploaded_files table
+      try { db.run('INSERT INTO uploaded_files (original_name, stored_name, rel_path, size, mime, sha256, uploaded_at, uploaded_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', [origName, storedName, relPath, req.file.size, guessed, sha256, now, uploadedBy]); }
+      catch (e) {
+        // Ensure table exists (older DBs)
+        try {
+          db.run(`CREATE TABLE IF NOT EXISTS uploaded_files (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            original_name TEXT,
+            stored_name TEXT,
+            rel_path TEXT NOT NULL,
+            size INTEGER,
+            mime TEXT,
+            sha256 TEXT,
+            uploaded_at TEXT,
+            uploaded_by TEXT
+          );`);
+          db.run('INSERT INTO uploaded_files (original_name, stored_name, rel_path, size, mime, sha256, uploaded_at, uploaded_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', [origName, storedName, relPath, req.file.size, guessed, sha256, now, uploadedBy]);
+        } catch (ee) {
+          return res.status(500).json({ error: 'db_error', details: ee?.message || String(ee) });
+        }
+      }
+      const id = one('SELECT last_insert_rowid() as id')?.id;
+      persist(db);
+      // Return a stable API URL for this file
+      const apiUrl = `/api/files/${id}`;
+      return res.json({ id, name: origName, size: req.file.size, mime: guessed, sha256, url: apiUrl });
+    } catch (e) {
+      res.status(500).json({ error: 'upload_failed', details: e?.message || String(e) });
+    }
+  });
+
+  // Import and save a SharePoint/Graph file to the server library (deduped by sha256)
+  // Body: { driveId, itemId, url?, name? }
+  // Auth: Bearer <Graph token> header or token query param
+  app.post('/api/library/save-graph', express.json({ limit: '1mb' }), async (req, res) => {
+    try {
+      const driveId = String(req.body?.driveId || '') || '';
+      const itemId = String(req.body?.itemId || '') || '';
+      const rawUrl = String(req.body?.url || '');
+      const nameHint = String(req.body?.name || 'document.pdf');
+      const qToken = (req.query?.token || '').toString();
+      const hdrAuth = (req.headers['authorization'] || '').toString();
+      const bearer = qToken ? `Bearer ${qToken}` : (hdrAuth && /^Bearer\s+/i.test(hdrAuth) ? hdrAuth : '');
+      if (!bearer) return res.status(401).json({ error: 'token_required' });
+
+      let target;
+      if (driveId && itemId) {
+        target = new URL(`https://graph.microsoft.com/v1.0/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(itemId)}/content`);
+      } else if (rawUrl) {
+        const b64 = Buffer.from(rawUrl, 'utf8').toString('base64').replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+        const shareId = `u!${b64}`;
+        target = new URL(`https://graph.microsoft.com/v1.0/shares/${shareId}/driveItem/content`);
+      } else {
+        return res.status(400).json({ error: 'missing_ids_or_url' });
+      }
+
+      const TIMEOUT_MS = Number(process.env.PROXY_TIMEOUT_MS || 15000);
+      const fetchBlob = () => new Promise((resolve, reject) => {
+        const opts = { method: 'GET', headers: { 'Authorization': bearer, 'User-Agent': 'Sunbeth-Graph-Importer/1.0' }, agent: getProxyAgent(target) };
+        const r = https.request(target, opts, (up) => {
+          if (up.statusCode >= 300 && up.statusCode < 400 && up.headers.location) {
+            try {
+              const next = new URL(up.headers.location, target);
+              const client = next.protocol === 'https:' ? https : http;
+              const r2 = client.request(next, { method: 'GET', headers: { 'User-Agent': 'Sunbeth-Graph-Importer/1.0' }, agent: getProxyAgent(next) }, (up2) => {
+                const chunks = [];
+                up2.on('data', (c) => chunks.push(c));
+                up2.on('end', () => resolve({ buffer: Buffer.concat(chunks), contentType: up2.headers['content-type'] || 'application/octet-stream' }));
+                up2.on('error', reject);
+              });
+              r2.setTimeout(TIMEOUT_MS, () => { try { r2.destroy(new Error('timeout')); } catch {} });
+              r2.on('error', reject);
+              r2.end();
+              return;
+            } catch (e) { return reject(e); }
+          }
+          const chunks = [];
+          up.on('data', (c) => chunks.push(c));
+          up.on('end', () => resolve({ buffer: Buffer.concat(chunks), contentType: up.headers['content-type'] || 'application/octet-stream' }));
+          up.on('error', reject);
+        });
+        r.setTimeout(TIMEOUT_MS, () => { try { r.destroy(new Error('timeout')); } catch {} });
+        r.on('error', reject);
+        r.end();
+      });
+
+  const { buffer, contentType } = await fetchBlob();
+      const sha256 = crypto.createHash('sha256').update(buffer).digest('hex');
+      // Check existing
+      const exist = one('SELECT id, original_name, rel_path, mime, size FROM uploaded_files WHERE sha256=? LIMIT 1', [sha256]);
+      if (exist) {
+        return res.json({ id: exist.id, name: exist.original_name, url: `/api/files/${exist.id}`, mime: exist.mime, size: exist.size, sha256, deduped: true });
+      }
+      // Store new
+      const uploadsDir = path.join(DATA_DIR, 'uploads');
+      if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+      const y = new Date().getUTCFullYear();
+      const m = String(new Date().getUTCMonth() + 1).padStart(2, '0');
+      const subDir = path.join(uploadsDir, String(y), String(m));
+      if (!fs.existsSync(subDir)) fs.mkdirSync(subDir, { recursive: true });
+      const rid = crypto.randomBytes(8).toString('hex');
+      // Derive a stable extension and mime; prefer inferred type when contentType is generic
+      const ext = mime.extension(contentType) ? `.${mime.extension(contentType)}` : (mime.extension(mime.lookup(nameHint) || '') ? `.${mime.extension(mime.lookup(nameHint) || '')}` : '.pdf');
+      const storedName = `${rid}${ext}`;
+      const fullPath = path.join(subDir, storedName);
+      fs.writeFileSync(fullPath, buffer);
+      const now = new Date().toISOString();
+      const uploadedBy = String(req.headers['x-user-email'] || req.headers['x-admin-email'] || '').toLowerCase() || null;
+      const relPath = path.relative(DATA_DIR, fullPath).replace(/\\/g, '/');
+      // Pick a better mime if upstream returned octet-stream
+      let saveMime = contentType || '';
+      if (!saveMime || /octet-stream/i.test(saveMime)) {
+        saveMime = mime.lookup(nameHint) || mime.lookup(storedName) || 'application/pdf';
+      }
+      try { db.run('INSERT INTO uploaded_files (original_name, stored_name, rel_path, size, mime, sha256, uploaded_at, uploaded_by, source_type, source_url, driveId, itemId) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [nameHint, storedName, relPath, buffer.length, saveMime, sha256, now, uploadedBy, 'sharepoint', rawUrl || null, driveId || null, itemId || null]); }
+      catch (e) {
+        // Ensure columns exist
+        try {
+          try { db.run("ALTER TABLE uploaded_files ADD COLUMN source_type TEXT"); } catch {}
+          try { db.run("ALTER TABLE uploaded_files ADD COLUMN source_url TEXT"); } catch {}
+          try { db.run("ALTER TABLE uploaded_files ADD COLUMN driveId TEXT"); } catch {}
+          try { db.run("ALTER TABLE uploaded_files ADD COLUMN itemId TEXT"); } catch {}
+          db.run('INSERT INTO uploaded_files (original_name, stored_name, rel_path, size, mime, sha256, uploaded_at, uploaded_by, source_type, source_url, driveId, itemId) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [nameHint, storedName, relPath, buffer.length, saveMime, sha256, now, uploadedBy, 'sharepoint', rawUrl || null, driveId || null, itemId || null]);
+        } catch (ee) {
+          return res.status(500).json({ error: 'db_error', details: ee?.message || String(ee) });
+        }
+      }
+      const id = one('SELECT last_insert_rowid() as id')?.id;
+      persist(db);
+      return res.json({ id, name: nameHint, url: `/api/files/${id}`, mime: contentType || 'application/octet-stream', size: buffer.length, sha256 });
+    } catch (e) {
+      res.status(500).json({ error: 'save_graph_failed', details: e?.message || String(e) });
+    }
+  });
+
+  // List server library files (most recent first)
+  app.get('/api/library/list', (req, res) => {
+    try {
+      const q = String(req.query.q || '').trim().toLowerCase();
+      const limit = Math.max(1, Math.min(200, Number(req.query.limit || 100)));
+      let rows = all('SELECT id, original_name, size, mime, uploaded_at, sha256 FROM uploaded_files ORDER BY id DESC LIMIT ?', [limit]);
+      if (q) {
+        rows = rows.filter(r => String(r.original_name || '').toLowerCase().includes(q) || String(r.mime || '').toLowerCase().includes(q));
+      }
+      res.json({ files: rows.map(r => ({ id: r.id, name: r.original_name, size: r.size, mime: r.mime, uploadedAt: r.uploaded_at, sha256: r.sha256, url: `/api/files/${r.id}` })) });
+    } catch (e) {
+      res.status(500).json({ error: 'list_failed' });
+    }
+  });
+
+  // GET /api/files/:id -> stream file inline (or as attachment if download=1); supports diag=1
+  app.get('/api/files/:id', (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      if (!Number.isInteger(id)) return res.status(400).json({ error: 'invalid_id' });
+      const row = one('SELECT id, original_name, stored_name, rel_path, size, mime, sha256, uploaded_at FROM uploaded_files WHERE id=?', [id]);
+      if (!row) return res.status(404).json({ error: 'not_found' });
+      const isDiag = String(req.query.diag || '').toLowerCase() === '1' || String(req.query.diag || '').toLowerCase() === 'true';
+      const dl = String(req.query.download || '') === '1';
+      const absPath = path.join(DATA_DIR, String(row.rel_path || ''));
+      if (!fs.existsSync(absPath)) return res.status(404).json({ error: 'file_missing' });
+      // Prefer a specific content-type; if DB mime is generic, infer from filename
+      let ct = row.mime || '';
+      if (!ct || /octet-stream/i.test(String(ct))) {
+        ct = mime.lookup(row.original_name || row.stored_name || '') || 'application/octet-stream';
+      }
+      if (isDiag) {
+        return res.json({ ok: true, id: row.id, name: row.original_name, size: row.size, mime: ct, sha256: row.sha256, path: row.rel_path });
+      }
+      res.setHeader('Content-Type', String(ct));
+      res.setHeader('Cache-Control', 'no-store');
+      if (dl) {
+        res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(row.original_name || 'file')}"`);
+      } else {
+        res.setHeader('Content-Disposition', 'inline');
+      }
+      const stream = fs.createReadStream(absPath);
+      stream.on('error', () => { try { res.destroy(); } catch {} });
+      stream.pipe(res);
+    } catch (e) {
+      res.status(500).json({ error: 'serve_failed', details: e?.message || String(e) });
+    }
+  });
+
+  // Internal convenience for path-based fetch (not exposed in UI)
+  app.get('/api/files/by-path/:relPath', (req, res) => {
+    try {
+      const relPath = decodeURIComponent(req.params.relPath || '');
+      const abs = path.join(DATA_DIR, relPath);
+      if (!abs.startsWith(DATA_DIR)) return res.status(400).json({ error: 'invalid_path' });
+      if (!fs.existsSync(abs)) return res.status(404).json({ error: 'not_found' });
+      const ct = mime.lookup(abs) || 'application/octet-stream';
+      res.setHeader('Content-Type', String(ct));
+      res.setHeader('Cache-Control', 'no-store');
+      fs.createReadStream(abs).pipe(res);
+    } catch (e) { res.status(500).json({ error: 'serve_failed' }); }
   });
   
   // Bulk upload Businesses (CSV or Excel)
@@ -701,7 +1630,7 @@ async function start() {
   const token = crypto.randomBytes(32).toString('hex');
       const expiresAt = Date.now() + 1000 * 60 * 60 * 48; // 48 hours
       onboardingTokens.set(e, { token, expiresAt });
-  const baseUrl = (process.env.FRONTEND_BASE_URL || req.headers.origin || (`${req.protocol}://${req.headers.host}`));
+  const baseUrl = (getSetting('frontend_base_url', process.env.FRONTEND_BASE_URL || '') || req.headers.origin || (`${req.protocol}://${req.headers.host}`));
   const link = `${String(baseUrl).replace(/\/$/,'')}/onboard?email=${encodeURIComponent(e)}&token=${token}`;
       await sendOnboardingEmail(e, name || '', link);
       res.json({ ok: true });
@@ -722,7 +1651,7 @@ async function start() {
   const token = crypto.randomBytes(32).toString('hex');
       const expiresAt = Date.now() + 1000 * 60 * 60 * 48; // 48 hours
       onboardingTokens.set(e, { token, expiresAt });
-  const baseUrl = (process.env.FRONTEND_BASE_URL || req.headers.origin || (`${req.protocol}://${req.headers.host}`));
+  const baseUrl = (getSetting('frontend_base_url', process.env.FRONTEND_BASE_URL || '') || req.headers.origin || (`${req.protocol}://${req.headers.host}`));
   const link = `${String(baseUrl).replace(/\/$/,'')}/onboard?email=${encodeURIComponent(e)}&token=${token}`;
       await sendOnboardingEmail(e, user.name || '', link);
       res.json({ ok: true });
@@ -771,17 +1700,42 @@ async function start() {
   // Notification Emails API
   app.get('/api/notification-emails', (req, res) => {
     try {
-      const stmt = db.prepare('SELECT email FROM notification_emails ORDER BY email ASC');
-      const emails = [];
-      while (stmt.step()) {
-        const row = stmt.getAsObject();
-        emails.push(row.email);
-      }
-      stmt.free();
-      res.json({ emails });
+      const rows = all('SELECT email FROM notification_emails ORDER BY email ASC');
+      res.json({ emails: rows.map(r => r.email) });
     } catch (e) {
       res.status(500).json({ error: 'Failed to load notification emails', details: e?.message || e });
     }
+  });
+
+  // Customization Requests
+  app.post('/api/customization-requests', (req, res) => {
+    try {
+      const tenantId = req?.tenant?.id || null;
+      if (!tenantId) return res.status(400).json({ error: 'tenant_unresolved' });
+      const { contactName=null, contactEmail=null, contactPhone=null, description=null, scope=null, priority='normal' } = req.body || {};
+      if (!description || String(description).trim().length < 5) return res.status(400).json({ error: 'description_required' });
+      db.run(`INSERT INTO customization_requests (tenant_id, contact_name, contact_email, contact_phone, description, scope, priority, status)
+              VALUES (?, ?, ?, ?, ?, ?, ?, 'open')`,
+        [tenantId, contactName, contactEmail, contactPhone, String(description).trim(), scope, priority]);
+      const id = one('SELECT last_insert_rowid() as id')?.id;
+      persist(db);
+      res.json({ id });
+    } catch (e) { res.status(500).json({ error: 'create_failed' }); }
+  });
+  app.get('/api/admin/customization-requests', (req, res) => {
+    try {
+      const tenantId = req.query.tenantId ? Number(req.query.tenantId) : null;
+      const where = tenantId ? 'WHERE cr.tenant_id=?' : '';
+      const params = tenantId ? [tenantId] : [];
+      const rows = all(
+        `SELECT cr.id, cr.tenant_id as tenantId, t.name as tenantName, cr.contact_name as contactName, cr.contact_email as contactEmail,
+                cr.contact_phone as contactPhone, cr.description, cr.scope, cr.priority, cr.status, cr.created_at as createdAt
+         FROM customization_requests cr
+         JOIN tenants t ON t.id=cr.tenant_id
+         ${where}
+         ORDER BY cr.id DESC`, params);
+      res.json({ requests: rows });
+    } catch (e) { res.status(500).json({ error: 'list_failed' }); }
   });
 
   app.post('/api/notification-emails', (req, res) => {
@@ -814,6 +1768,14 @@ async function start() {
   } catch (e) { console.warn('Business seed check failed (non-fatal):', e); }
 
   // Routes
+  // OpenAPI schema endpoint and Swagger UI (read-only; no auth required)
+  try {
+    const YAML = require('yamljs');
+    const swaggerUi = require('swagger-ui-express');
+    const spec = YAML.load(path.join(__dirname, 'openapi.yaml'));
+    app.get('/api/openapi.json', (_req, res) => res.json(spec));
+    app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(spec));
+  } catch {}
   // RBAC: permissions catalog
   app.get('/api/rbac/permissions', (_req, res) => {
     res.json(PERMISSIONS);
@@ -829,6 +1791,14 @@ async function start() {
   // RBAC: role permissions (set mapping for a role)
   app.put('/api/rbac/role-permissions', (req, res) => {
     try {
+      // Require SuperAdmin via header/query for modifying RBAC
+      try {
+        const hdr = (req.headers['x-user-email'] || req.headers['x-admin-email'] || '').toString().trim().toLowerCase();
+        const qp = (req.query && req.query.adminEmail ? String(req.query.adminEmail) : '').trim().toLowerCase();
+        const email = hdr || qp || '';
+        const roles = resolveUserRoles(email, db);
+        if (!roles.includes('SuperAdmin')) return res.status(403).json({ error: 'forbidden', reason: 'superadmin_required' });
+      } catch {}
       const { role, mapping } = req.body || {};
       if (!role || typeof mapping !== 'object') return res.status(400).json({ error: 'invalid_payload' });
       db.run('BEGIN');
@@ -855,6 +1825,14 @@ async function start() {
   // RBAC: user permissions (set mapping for a user)
   app.put('/api/rbac/user-permissions', (req, res) => {
     try {
+      // Require SuperAdmin via header/query for modifying RBAC
+      try {
+        const hdr = (req.headers['x-user-email'] || req.headers['x-admin-email'] || '').toString().trim().toLowerCase();
+        const qp = (req.query && req.query.adminEmail ? String(req.query.adminEmail) : '').trim().toLowerCase();
+        const email = hdr || qp || '';
+        const roles = resolveUserRoles(email, db);
+        if (!roles.includes('SuperAdmin')) return res.status(403).json({ error: 'forbidden', reason: 'superadmin_required' });
+      } catch {}
       const { email, mapping } = req.body || {};
       const e = String(email || '').trim().toLowerCase();
       if (!e || !e.includes('@') || typeof mapping !== 'object') return res.status(400).json({ error: 'invalid_payload' });
@@ -1176,25 +2154,37 @@ async function start() {
       let target;
       try { target = new URL(raw); } catch { return res.status(400).json({ error: 'invalid_url' }); }
       if (!/^https?:$/.test(target.protocol)) return res.status(400).json({ error: 'unsupported_protocol' });
+      const isDiag = String(req.query.diag || '').toLowerCase() === '1' || String(req.query.diag || '').toLowerCase() === 'true';
 
       const forward = (urlObj, redirects = 0) => {
         const client = urlObj.protocol === 'https:' ? https : http;
-        const reqOpts = { method: 'GET', headers: { 'User-Agent': 'Sunbeth-Proxy/1.0' } };
+        const agent = getProxyAgent(urlObj);
+        const TIMEOUT_MS = Number(process.env.PROXY_TIMEOUT_MS || 15000);
+        const reqOpts = { method: 'GET', headers: { 'User-Agent': 'Sunbeth-Proxy/1.0' }, agent };
         const r = client.request(urlObj, reqOpts, (upstream) => {
           // Handle simple redirects up to 3 hops
           if (upstream.statusCode >= 300 && upstream.statusCode < 400 && upstream.headers.location && redirects < 3) {
             try { const next = new URL(upstream.headers.location, urlObj); forward(next, redirects + 1); } catch { res.status(502).end(); }
             return;
           }
-          // Propagate content-type if available; force inline disposition
-          const ct = upstream.headers['content-type'] || 'application/octet-stream';
-          res.setHeader('Content-Type', ct);
-          res.setHeader('Cache-Control', 'no-store');
-          res.removeHeader && res.removeHeader('X-Frame-Options');
-          upstream.on('error', () => { try { res.destroy(); } catch {} });
-          upstream.pipe(res);
+          if (isDiag) {
+            const ct = upstream.headers['content-type'] || '';
+            const len = upstream.headers['content-length'] || null;
+            try { upstream.destroy(); } catch {}
+            return res.json({ ok: true, status: upstream.statusCode, contentType: ct, contentLength: len, finalUrl: urlObj.toString(), redirected: redirects > 0, proxyUsed: !!agent, timeoutMs: TIMEOUT_MS });
+          } else {
+            // Propagate content-type if available; force inline disposition
+            const ct = upstream.headers['content-type'] || 'application/octet-stream';
+            res.setHeader('Content-Type', ct);
+            res.setHeader('Cache-Control', 'no-store');
+            res.removeHeader && res.removeHeader('X-Frame-Options');
+            upstream.on('error', () => { try { res.destroy(); } catch {} });
+            upstream.pipe(res);
+          }
         });
-        r.on('error', () => { if (!res.headersSent) res.status(502).json({ error: 'upstream_error' }); else try { res.destroy(); } catch {} });
+        r.on('timeout', () => { try { r.destroy(new Error('timeout')); } catch {} });
+        r.setTimeout(TIMEOUT_MS);
+        r.on('error', (e) => { if (isDiag && !res.headersSent) return res.status(200).json({ ok: false, error: 'upstream_error', message: String(e?.message || e) }); if (!res.headersSent) res.status(502).json({ error: 'upstream_error' }); else try { res.destroy(); } catch {} });
         r.end();
       };
       forward(target);
@@ -1217,6 +2207,7 @@ async function start() {
       const qToken = (req.query.token || '').toString();
       const hdrAuth = (req.headers['authorization'] || '').toString();
       const bearer = qToken ? `Bearer ${qToken}` : (hdrAuth && /^Bearer\s+/i.test(hdrAuth) ? hdrAuth : '');
+      const isDiag = String(req.query.diag || '').toLowerCase() === '1' || String(req.query.diag || '').toLowerCase() === 'true';
       const download = (req.query.download || '').toString() === '1';
       if (!bearer) return res.status(401).json({ error: 'token_required' });
 
@@ -1233,65 +2224,92 @@ async function start() {
       }
 
       const follow = (targetUrl, redirects = 0) => {
-        const opts = { method: 'GET', headers: { 'Authorization': bearer, 'User-Agent': 'Sunbeth-Graph-Proxy/1.0' } };
+        const agent = getProxyAgent(targetUrl);
+        const TIMEOUT_MS = Number(process.env.PROXY_TIMEOUT_MS || 15000);
+        const opts = { method: 'GET', headers: { 'Authorization': bearer, 'User-Agent': 'Sunbeth-Graph-Proxy/1.0' }, agent };
         const r = https.request(targetUrl, opts, (upstream) => {
           // Handle Graph 302 redirect to a pre-authenticated blob URL
           if (upstream.statusCode >= 300 && upstream.statusCode < 400 && upstream.headers.location && redirects < 3) {
             try {
               const next = new URL(upstream.headers.location, targetUrl);
+              // If caller wants a browser redirect (download=1 or explicit redir=1), send 302 to client instead of streaming
+              const wantRedirect = (!isDiag) && (download || String(req.query.redir || '').toString() === '1');
+              if (wantRedirect) {
+                // Best-effort content-type hint for some browsers
+                try { const ct2 = upstream.headers['content-type'] || 'application/octet-stream'; res.setHeader('Content-Type', ct2); } catch {}
+                return res.redirect(302, next.toString());
+              }
               const client = next.protocol === 'https:' ? https : http;
-              const r2 = client.request(next, { method: 'GET', headers: { 'User-Agent': 'Sunbeth-Graph-Proxy/1.0' } }, (up2) => {
-                const ct2 = up2.headers['content-type'] || 'application/octet-stream';
-                res.setHeader('Content-Type', ct2);
-                res.setHeader('Cache-Control', 'no-store');
-                if (download) {
-                  try {
-                    const cd = up2.headers['content-disposition'];
-                    let name = null;
-                    if (cd && /filename\*=utf-8''([^;]+)|filename="?([^";]+)"?/i.test(String(cd))) {
-                      const m = String(cd).match(/filename\*=utf-8''([^;]+)|filename="?([^";]+)"?/i);
-                      name = decodeURIComponent(m[1] || m[2] || 'file');
-                    }
-                    if (!name) {
-                      const candidate = decodeURIComponent((next.pathname || '').split('/').pop() || '').trim();
-                      name = candidate && candidate !== 'content' ? candidate : 'document';
-                    }
-                    // If we know it's a PDF and there's no extension, add .pdf for better UX
-                    if (/application\/pdf/i.test(ct2) && !/\.pdf$/i.test(name)) name = `${name}.pdf`;
-                    res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
-                  } catch {}
+              const agent2 = getProxyAgent(next);
+              const r2 = client.request(next, { method: 'GET', headers: { 'User-Agent': 'Sunbeth-Graph-Proxy/1.0' }, agent: agent2 }, (up2) => {
+                if (isDiag) {
+                  const ct2 = up2.headers['content-type'] || '';
+                  const len2 = up2.headers['content-length'] || null;
+                  try { up2.destroy(); } catch {}
+                  return res.json({ ok: true, phase: 'redirect', status: up2.statusCode, contentType: ct2, contentLength: len2, finalUrl: next.toString(), redirected: true, proxyUsed: !!agent2, timeoutMs: TIMEOUT_MS });
+                } else {
+                  const ct2 = up2.headers['content-type'] || 'application/octet-stream';
+                  res.setHeader('Content-Type', ct2);
+                  res.setHeader('Cache-Control', 'no-store');
+                  if (download) {
+                    try {
+                      const cd = up2.headers['content-disposition'];
+                      let name = null;
+                      if (cd && /filename\*=utf-8''([^;]+)|filename="?([^";]+)"?/i.test(String(cd))) {
+                        const m = String(cd).match(/filename\*=utf-8''([^;]+)|filename="?([^";]+)"?/i);
+                        name = decodeURIComponent(m[1] || m[2] || 'file');
+                      }
+                      if (!name) {
+                        const candidate = decodeURIComponent((next.pathname || '').split('/').pop() || '').trim();
+                        name = candidate && candidate !== 'content' ? candidate : 'document';
+                      }
+                      if (/application\/pdf/i.test(ct2) && !/\.pdf$/i.test(name)) name = `${name}.pdf`;
+                      res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
+                    } catch {}
+                  }
+                  up2.on('error', () => { try { res.destroy(); } catch {} });
+                  up2.pipe(res);
                 }
-                up2.on('error', () => { try { res.destroy(); } catch {} });
-                up2.pipe(res);
               });
-              r2.on('error', () => { if (!res.headersSent) res.status(502).json({ error: 'upstream_error' }); else try { res.destroy(); } catch {} });
+              r2.on('timeout', () => { try { r2.destroy(new Error('timeout')); } catch {} });
+              r2.setTimeout(TIMEOUT_MS);
+              r2.on('error', (e) => { if (isDiag && !res.headersSent) return res.status(200).json({ ok: false, phase: 'redirect', error: 'upstream_error', message: String(e?.message || e) }); if (!res.headersSent) res.status(502).json({ error: 'upstream_error' }); else try { res.destroy(); } catch {} });
               r2.end();
               return;
             } catch {
-              return res.status(502).json({ error: 'redirect_failed' });
+              return isDiag ? res.status(200).json({ ok: false, error: 'redirect_failed' }) : res.status(502).json({ error: 'redirect_failed' });
             }
           }
-          // No redirect: stream as-is
-          const ct = upstream.headers['content-type'] || 'application/octet-stream';
-          res.setHeader('Content-Type', ct);
-          res.setHeader('Cache-Control', 'no-store');
-          if (download) {
-            try {
-              const cd = upstream.headers['content-disposition'];
-              let name = null;
-              if (cd && /filename\*=utf-8''([^;]+)|filename="?([^";]+)"?/i.test(String(cd))) {
-                const m = String(cd).match(/filename\*=utf-8''([^;]+)|filename="?([^";]+)"?/i);
-                name = decodeURIComponent(m[1] || m[2] || 'file');
-              }
-              if (!name) name = 'document';
-              if (/application\/pdf/i.test(ct) && !/\.pdf$/i.test(name)) name = `${name}.pdf`;
-              res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
-            } catch {}
+          if (isDiag) {
+            const ct = upstream.headers['content-type'] || '';
+            const len = upstream.headers['content-length'] || null;
+            try { upstream.destroy(); } catch {}
+            return res.json({ ok: true, phase: 'direct', status: upstream.statusCode, contentType: ct, contentLength: len, finalUrl: targetUrl.toString(), redirected: redirects > 0, proxyUsed: !!agent, timeoutMs: TIMEOUT_MS });
+          } else {
+            // No redirect: stream as-is
+            const ct = upstream.headers['content-type'] || 'application/octet-stream';
+            res.setHeader('Content-Type', ct);
+            res.setHeader('Cache-Control', 'no-store');
+            if (download) {
+              try {
+                const cd = upstream.headers['content-disposition'];
+                let name = null;
+                if (cd && /filename\*=utf-8''([^;]+)|filename="?([^";]+)"?/i.test(String(cd))) {
+                  const m = String(cd).match(/filename\*=utf-8''([^;]+)|filename="?([^";]+)"?/i);
+                  name = decodeURIComponent(m[1] || m[2] || 'file');
+                }
+                if (!name) name = 'document';
+                if (/application\/pdf/i.test(ct) && !/\.pdf$/i.test(name)) name = `${name}.pdf`;
+                res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
+              } catch {}
+            }
+            upstream.on('error', () => { try { res.destroy(); } catch {} });
+            upstream.pipe(res);
           }
-          upstream.on('error', () => { try { res.destroy(); } catch {} });
-          upstream.pipe(res);
         });
-        r.on('error', () => { if (!res.headersSent) res.status(502).json({ error: 'upstream_error' }); else try { res.destroy(); } catch {} });
+        r.on('timeout', () => { try { r.destroy(new Error('timeout')); } catch {} });
+        r.setTimeout(TIMEOUT_MS);
+        r.on('error', (e) => { if (isDiag && !res.headersSent) return res.status(200).json({ ok: false, phase: 'direct', error: 'upstream_error', message: String(e?.message || e) }); if (!res.headersSent) res.status(502).json({ error: 'upstream_error' }); else try { res.destroy(); } catch {} });
         r.end();
       };
       follow(url);
@@ -1397,7 +2415,7 @@ async function start() {
   // Documents by batch
   app.get('/api/batches/:id/documents', (req, res) => {
     const id = Number(req.params.id);
-    const rows = all('SELECT id, batchId, title, url, version, requiresSignature, driveId, itemId, source FROM documents WHERE batchId=? ORDER BY id', [id]);
+    const rows = all('SELECT id, batchId, title, url, version, requiresSignature, driveId, itemId, source, localFileId, localUrl FROM documents WHERE batchId=? ORDER BY id', [id]);
     res.json(rows.map(mapDoc));
   });
 
@@ -1575,7 +2593,7 @@ async function start() {
 
       const body = req.body || {};
       const { name, startDate = null, dueDate = null, description = null, status = 1 } = body.batch || body;
-      const documents = Array.isArray(body.documents) ? body.documents : [];
+  const documents = Array.isArray(body.documents) ? body.documents : [];
       const recipients = Array.isArray(body.recipients) ? body.recipients : [];
 
       // Validate batch
@@ -1617,10 +2635,10 @@ async function start() {
         // Insert documents
         for (let i = 0; i < documents.length; i++) {
           const d = documents[i] || {};
-          const { title, url, version = 1, requiresSignature = 0, driveId = null, itemId = null, source = null } = d;
+          const { title, url, version = 1, requiresSignature = 0, driveId = null, itemId = null, source = null, localFileId = null, localUrl = null } = d;
           if (!title || !url) continue;
-          db.run('INSERT OR IGNORE INTO documents (batchId, title, url, version, requiresSignature, driveId, itemId, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-            [newBatchId, String(title), String(url), Number(version) || 1, requiresSignature ? 1 : 0, driveId, itemId, source]);
+          db.run('INSERT OR IGNORE INTO documents (batchId, title, url, version, requiresSignature, driveId, itemId, source, localFileId, localUrl) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            [newBatchId, String(title), String(url), Number(version) || 1, requiresSignature ? 1 : 0, driveId, itemId, source, localFileId, localUrl]);
           docsInserted++;
         }
 
@@ -1732,7 +2750,7 @@ async function start() {
       try {
         for (let i = 0; i < docs.length; i++) {
           const d = docs[i];
-          const { title, url, version = 1, requiresSignature = 0, driveId = null, itemId = null, source = null } = d || {};
+          const { title, url, version = 1, requiresSignature = 0, driveId = null, itemId = null, source = null, localFileId = null, localUrl = null } = d || {};
           
           // Validate document fields
           if (!title || !url) {
@@ -1765,8 +2783,8 @@ async function start() {
           });
           
           try {
-            db.run('INSERT OR IGNORE INTO documents (batchId, title, url, version, requiresSignature, driveId, itemId, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', 
-              [id, String(title), String(url), Number(version) || 1, requiresSignature ? 1 : 0, driveId, itemId, source]);
+            db.run('INSERT OR IGNORE INTO documents (batchId, title, url, version, requiresSignature, driveId, itemId, source, localFileId, localUrl) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', 
+              [id, String(title), String(url), Number(version) || 1, requiresSignature ? 1 : 0, driveId, itemId, source, localFileId, localUrl]);
             count++;
           } catch (docError) {
             logger.error('documents-create', `Failed to insert document ${i + 1}`, {
@@ -1822,6 +2840,117 @@ async function start() {
       }
       
       res.status(500).json({ error: 'insert_failed', message: 'Failed to add documents to batch' });
+    }
+  });
+
+  // Admin: remove documents from a batch
+  // Supports deletion by document ids or by URLs (convenient for clients that track URLs)
+  // DELETE /api/batches/:id/documents
+  // Body: { ids?: number[], urls?: string[] }
+  // Also supports single query params: ?docId=123 or ?url=...
+  app.delete('/api/batches/:id/documents', (req, res) => {
+    try {
+      const logger = req && req.logger ? req.logger : null;
+      const batchId = Number(req.params.id);
+      if (!Number.isInteger(batchId) || batchId <= 0) {
+        return res.status(400).json({ error: 'invalid_batch_id' });
+      }
+      const body = req.body || {};
+      const ids = Array.isArray(body.ids) ? body.ids.map((x) => Number(x)).filter((n) => Number.isInteger(n) && n > 0) : [];
+      const urls = Array.isArray(body.urls) ? body.urls.map((u) => String(u).trim()).filter(Boolean) : [];
+      // Query fallbacks
+  const qId = req.query.docId != null ? Number(req.query.docId) : null;
+      const qUrl = req.query.url != null ? String(req.query.url) : null;
+  if (Number.isInteger(qId) && qId > 0) ids.push(qId);
+      if (qUrl && qUrl.trim()) urls.push(qUrl.trim());
+
+      try { (logger && logger.info) ? logger.info('documents-delete:start', { batchId, ids, urls, qId, qUrl }) : console.log('[documents-delete:start]', { batchId, ids, urls, qId, qUrl }); } catch {}
+
+      if (ids.length === 0 && urls.length === 0) {
+        return res.status(400).json({ error: 'ids_or_urls_required' });
+      }
+
+      let removed = 0;
+      db.run('BEGIN');
+      try {
+        for (const id of ids) {
+          try {
+            const before = one('SELECT COUNT(*) as c FROM documents WHERE batchId=? AND id=?', [batchId, id])?.c || 0;
+            db.run('DELETE FROM documents WHERE batchId=? AND id=?', [batchId, id]);
+            const after = one('SELECT COUNT(*) as c FROM documents WHERE batchId=? AND id=?', [batchId, id])?.c || 0;
+            const delta = Math.max(0, Number(before) - Number(after));
+            removed += delta;
+            try { (logger && logger.debug) ? logger.debug('documents-delete:by-id', { id, before, after, delta }) : console.log('[documents-delete:by-id]', { id, before, after, delta }); } catch {}
+          } catch (e) {
+            try { (logger && logger.error) ? logger.error('documents-delete:by-id-error', { id, error: String(e?.message || e) }) : console.error('[documents-delete:by-id-error]', id, e); } catch {}
+          }
+        }
+        for (const u of urls) {
+          const raw = String(u || '').trim();
+          const normalized = (function(s){
+            try {
+              // strip query/hash and trailing slash for resilient matching
+              let base = s.split('#')[0];
+              base = base.split('?')[0];
+              return base.replace(/\/$/, '');
+            } catch { return s; }
+          })(raw);
+
+          let urlRemoved = 0;
+          try { (logger && logger.debug) ? logger.debug('documents-delete:url-normalize', { raw, normalized }) : console.log('[documents-delete:url-normalize]', { raw, normalized }); } catch {}
+
+          // Try exact matches first (canonical url and local server url)
+          try {
+            const beforeUrl = one('SELECT COUNT(*) as c FROM documents WHERE batchId=? AND url=?', [batchId, raw])?.c || 0;
+            db.run('DELETE FROM documents WHERE batchId=? AND url=?', [batchId, raw]);
+            const afterUrl = one('SELECT COUNT(*) as c FROM documents WHERE batchId=? AND url=?', [batchId, raw])?.c || 0;
+            const deltaUrl = Math.max(0, Number(beforeUrl) - Number(afterUrl));
+            urlRemoved += deltaUrl;
+          } catch {}
+          try {
+            const beforeLocal = one('SELECT COUNT(*) as c FROM documents WHERE batchId=? AND localUrl=?', [batchId, raw])?.c || 0;
+            db.run('DELETE FROM documents WHERE batchId=? AND localUrl=?', [batchId, raw]);
+            const afterLocal = one('SELECT COUNT(*) as c FROM documents WHERE batchId=? AND localUrl=?', [batchId, raw])?.c || 0;
+            const deltaLocal = Math.max(0, Number(beforeLocal) - Number(afterLocal));
+            urlRemoved += deltaLocal;
+          } catch {}
+
+          // Then try normalized variants (helps when clients passed ?download=1, hashes, or trailing slash)
+          if (normalized && normalized !== raw) {
+            try {
+              const beforeUrlN = one('SELECT COUNT(*) as c FROM documents WHERE batchId=? AND url=?', [batchId, normalized])?.c || 0;
+              db.run('DELETE FROM documents WHERE batchId=? AND url=?', [batchId, normalized]);
+              const afterUrlN = one('SELECT COUNT(*) as c FROM documents WHERE batchId=? AND url=?', [batchId, normalized])?.c || 0;
+              const deltaUrlN = Math.max(0, Number(beforeUrlN) - Number(afterUrlN));
+              urlRemoved += deltaUrlN;
+            } catch {}
+            try {
+              const beforeLocalN = one('SELECT COUNT(*) as c FROM documents WHERE batchId=? AND localUrl=?', [batchId, normalized])?.c || 0;
+              db.run('DELETE FROM documents WHERE batchId=? AND localUrl=?', [batchId, normalized]);
+              const afterLocalN = one('SELECT COUNT(*) as c FROM documents WHERE batchId=? AND localUrl=?', [batchId, normalized])?.c || 0;
+              const deltaLocalN = Math.max(0, Number(beforeLocalN) - Number(afterLocalN));
+              urlRemoved += deltaLocalN;
+            } catch {}
+          }
+
+          removed += urlRemoved;
+          try { (logger && logger.debug) ? logger.debug('documents-delete:by-url', { raw, normalized, delta: urlRemoved }) : console.log('[documents-delete:by-url]', { raw, normalized, delta: urlRemoved }); } catch {}
+        }
+        db.run('COMMIT');
+        persist(db);
+      } catch (e) {
+        try { db.run('ROLLBACK'); } catch {}
+        try { (logger && logger.error) ? logger.error('documents-delete:tx-error', { error: String(e?.message || e) }) : console.error('[documents-delete:tx-error]', e); } catch {}
+        return res.status(500).json({ error: 'delete_failed', details: e?.message || String(e) });
+      }
+      try { (logger && logger.info) ? logger.info('documents-delete:done', { batchId, idsCount: ids.length, urlsCount: urls.length, removed }) : console.log('[documents-delete:done]', { batchId, idsCount: ids.length, urlsCount: urls.length, removed }); } catch {}
+      return res.json({ ok: true, removed });
+    } catch (e) {
+      try {
+        const logger = req && req.logger ? req.logger : null;
+        (logger && logger.error) ? logger.error('documents-delete:failed', { error: String(e?.message || e) }) : console.error('[documents-delete:failed]', e);
+      } catch {}
+      return res.status(500).json({ error: 'delete_failed', details: e?.message || String(e) });
     }
   });
 
@@ -2106,10 +3235,16 @@ function mapDoc(r) {
     toba_title: r.title,
     toba_version: r.version != null ? String(r.version) : '1',
     toba_requiressignature: !!r.requiresSignature,
-    toba_fileurl: r.url,
+    // Prefer local server URL when available to ensure resilient viewing/downloading
+    toba_fileurl: r.localUrl || r.url,
+    // Also expose the original canonical URL (e.g., SharePoint) when a local backup exists
+    toba_originalurl: r.url || null,
     toba_driveid: r.driveId || null,
     toba_itemid: r.itemId || null,
-    toba_source: r.source || null
+    toba_source: r.source || null,
+    // expose local linkage for debugging/advanced UI (non-breaking to consumers)
+    toba_localfileid: r.localFileId != null ? String(r.localFileId) : null,
+    toba_localurl: r.localUrl || null
   };
 }
 
@@ -2157,6 +3292,8 @@ function bootstrapSchema(db) {
     driveId TEXT,
     itemId TEXT,
     source TEXT,
+    localFileId INTEGER,
+    localUrl TEXT,
     FOREIGN KEY (batchId) REFERENCES batches(id) ON DELETE CASCADE
   );`);
   db.run(`CREATE TABLE IF NOT EXISTS recipients (
@@ -2209,6 +3346,23 @@ function bootstrapSchema(db) {
   db.run(`CREATE UNIQUE INDEX IF NOT EXISTS ux_recipients_batch_email ON recipients(batchId, LOWER(email));`);
   db.run(`CREATE UNIQUE INDEX IF NOT EXISTS ux_documents_batch_url ON documents(batchId, url);`);
 
+  // Local uploaded files for on-server PDF backup
+  db.run(`CREATE TABLE IF NOT EXISTS uploaded_files (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    original_name TEXT,
+    stored_name TEXT,
+    rel_path TEXT NOT NULL,
+    size INTEGER,
+    mime TEXT,
+    sha256 TEXT,
+    uploaded_at TEXT,
+    uploaded_by TEXT,
+    source_type TEXT,
+    source_url TEXT,
+    driveId TEXT,
+    itemId TEXT
+  );`);
+
   // Roles table for RBAC overrides (DB-managed roles)
   db.run(`CREATE TABLE IF NOT EXISTS roles (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2234,9 +3388,103 @@ function bootstrapSchema(db) {
   );`);
   db.run(`CREATE UNIQUE INDEX IF NOT EXISTS ux_user_perm ON user_permissions(LOWER(email), permKey);`);
 
+  // Multi-tenant core tables (tenants, modules, licenses)
+  db.run(`CREATE TABLE IF NOT EXISTS tenants (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    code TEXT NOT NULL UNIQUE,
+    parent_id INTEGER,
+    is_active INTEGER DEFAULT 1,
+    is_owner INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (parent_id) REFERENCES tenants(id) ON DELETE SET NULL
+  );`);
+  db.run(`CREATE UNIQUE INDEX IF NOT EXISTS ux_tenants_code ON tenants(UPPER(code));`);
+  db.run(`CREATE TABLE IF NOT EXISTS tenant_modules (
+    tenant_id INTEGER NOT NULL,
+    module_name TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (tenant_id, module_name),
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+  );`);
+  db.run(`CREATE TABLE IF NOT EXISTS licenses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id INTEGER NOT NULL,
+    plan TEXT,
+    seats INTEGER,
+    status TEXT DEFAULT 'active',
+    is_free INTEGER DEFAULT 0,
+    valid_from TEXT,
+    valid_to TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+  );`);
+  // Theme catalog and assignments
+  db.run(`CREATE TABLE IF NOT EXISTS themes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    description TEXT,
+    light_json TEXT,
+    dark_json TEXT,
+    base_theme_id INTEGER,
+    is_system INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT,
+    FOREIGN KEY (base_theme_id) REFERENCES themes(id) ON DELETE SET NULL
+  );`);
+  db.run(`CREATE UNIQUE INDEX IF NOT EXISTS ux_themes_name ON themes(LOWER(name));`);
+  db.run(`CREATE TABLE IF NOT EXISTS theme_assignments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    theme_id INTEGER NOT NULL,
+    target_type TEXT NOT NULL, -- 'global' | 'tenant' | 'module' | 'plugin'
+    target_id TEXT,            -- null for global; tenant id as text; module name; plugin id
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (theme_id) REFERENCES themes(id) ON DELETE CASCADE
+  );`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_theme_assignments_target ON theme_assignments(target_type, target_id);`);
+  // Tenant custom domains
+  db.run(`CREATE TABLE IF NOT EXISTS tenant_domains (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id INTEGER NOT NULL,
+    domain TEXT NOT NULL UNIQUE,
+    is_primary INTEGER DEFAULT 0,
+    verified INTEGER DEFAULT 0,
+    added_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+  );`);
+  db.run(`CREATE UNIQUE INDEX IF NOT EXISTS ux_tenant_domains_domain ON tenant_domains(LOWER(domain));`);
+  // Tenant settings (JSON blob for theme and other preferences)
+  db.run(`CREATE TABLE IF NOT EXISTS tenant_settings (
+    tenant_id INTEGER PRIMARY KEY,
+    theme_json TEXT,
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+  );`);
+  // Customization requests (like WordPress site custom requests)
+  db.run(`CREATE TABLE IF NOT EXISTS customization_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id INTEGER NOT NULL,
+    contact_name TEXT,
+    contact_email TEXT,
+    contact_phone TEXT,
+    description TEXT,
+    scope TEXT,
+    priority TEXT DEFAULT 'normal',
+    status TEXT DEFAULT 'open',
+    created_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+  );`);
+
   // Seed a default business for convenience
   db.run("INSERT INTO businesses (name, code, isActive, description) VALUES ('Default Business', 'DEF', 1, 'Auto-created')");
   try { db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('external_support_enabled','0')"); } catch {}
+  // Seed an owner tenant if none
+  try {
+    const t = one('SELECT id FROM tenants WHERE is_owner=1 LIMIT 1');
+    if (!t) {
+      db.run("INSERT INTO tenants (name, code, is_owner, is_active) VALUES ('Owner Tenant','OWNER',1,1)");
+    }
+  } catch {}
 }
 
 // Best-effort migrations for existing databases (adds new columns if missing)
@@ -2271,12 +3519,50 @@ function migrateSchema(db) {
   try { db.run(`CREATE UNIQUE INDEX IF NOT EXISTS ux_role_perm ON role_permissions(LOWER(role), permKey);`); } catch {}
   try { db.run(`CREATE TABLE IF NOT EXISTS user_permissions (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL, permKey TEXT NOT NULL, value INTEGER NOT NULL DEFAULT 1);`); } catch {}
   try { db.run(`CREATE UNIQUE INDEX IF NOT EXISTS ux_user_perm ON user_permissions(LOWER(email), permKey);`); } catch {}
+  // Tenancy tables
+  try { db.run(`CREATE TABLE IF NOT EXISTS tenants (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, code TEXT NOT NULL UNIQUE, parent_id INTEGER, is_active INTEGER DEFAULT 1, is_owner INTEGER DEFAULT 0, created_at TEXT DEFAULT (datetime('now')), FOREIGN KEY (parent_id) REFERENCES tenants(id) ON DELETE SET NULL);`); } catch {}
+  try { db.run(`CREATE UNIQUE INDEX IF NOT EXISTS ux_tenants_code ON tenants(UPPER(code));`); } catch {}
+  try { db.run(`CREATE TABLE IF NOT EXISTS tenant_modules (tenant_id INTEGER NOT NULL, module_name TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (tenant_id, module_name), FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE);`); } catch {}
+  try { db.run(`CREATE TABLE IF NOT EXISTS licenses (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id INTEGER NOT NULL, plan TEXT, seats INTEGER, status TEXT DEFAULT 'active', is_free INTEGER DEFAULT 0, valid_from TEXT, valid_to TEXT, created_at TEXT DEFAULT (datetime('now')), FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE);`); } catch {}
+  // Domains and settings
+  try { db.run(`CREATE TABLE IF NOT EXISTS tenant_domains (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id INTEGER NOT NULL, domain TEXT NOT NULL UNIQUE, is_primary INTEGER DEFAULT 0, verified INTEGER DEFAULT 0, added_at TEXT DEFAULT (datetime('now')), FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE);`); } catch {}
+  try { db.run(`CREATE UNIQUE INDEX IF NOT EXISTS ux_tenant_domains_domain ON tenant_domains(LOWER(domain));`); } catch {}
+  try { db.run(`CREATE TABLE IF NOT EXISTS tenant_settings (tenant_id INTEGER PRIMARY KEY, theme_json TEXT, FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE);`); } catch {}
+  // Add generic settings JSON for tenant-scoped flags and options
+  try { db.run(`ALTER TABLE tenant_settings ADD COLUMN settings_json TEXT`); } catch {}
+  // Customization requests table
+  try { db.run(`CREATE TABLE IF NOT EXISTS customization_requests (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id INTEGER NOT NULL, contact_name TEXT, contact_email TEXT, contact_phone TEXT, description TEXT, scope TEXT, priority TEXT DEFAULT 'normal', status TEXT DEFAULT 'open', created_at TEXT DEFAULT (datetime('now')), FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE);`); } catch {}
+  // Themes tables
+  try { db.run(`CREATE TABLE IF NOT EXISTS themes (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, description TEXT, light_json TEXT, dark_json TEXT, base_theme_id INTEGER, is_system INTEGER DEFAULT 0, created_at TEXT DEFAULT (datetime('now')), updated_at TEXT, FOREIGN KEY (base_theme_id) REFERENCES themes(id) ON DELETE SET NULL);`); } catch {}
+  try { db.run(`CREATE UNIQUE INDEX IF NOT EXISTS ux_themes_name ON themes(LOWER(name));`); } catch {}
+  try { db.run(`CREATE TABLE IF NOT EXISTS theme_assignments (id INTEGER PRIMARY KEY AUTOINCREMENT, theme_id INTEGER NOT NULL, target_type TEXT NOT NULL, target_id TEXT, enabled INTEGER NOT NULL DEFAULT 1, created_at TEXT DEFAULT (datetime('now')), FOREIGN KEY (theme_id) REFERENCES themes(id) ON DELETE CASCADE);`); } catch {}
+  try { db.run(`CREATE INDEX IF NOT EXISTS idx_theme_assignments_target ON theme_assignments(target_type, target_id);`); } catch {}
+  // Local uploads table for older DBs
+  try { db.run(`CREATE TABLE IF NOT EXISTS uploaded_files (id INTEGER PRIMARY KEY AUTOINCREMENT, original_name TEXT, stored_name TEXT, rel_path TEXT NOT NULL, size INTEGER, mime TEXT, sha256 TEXT, uploaded_at TEXT, uploaded_by TEXT);`); } catch {}
+  try { db.run(`ALTER TABLE uploaded_files ADD COLUMN source_type TEXT`); } catch {}
+  try { db.run(`ALTER TABLE uploaded_files ADD COLUMN source_url TEXT`); } catch {}
+  try { db.run(`ALTER TABLE uploaded_files ADD COLUMN driveId TEXT`); } catch {}
+  try { db.run(`ALTER TABLE uploaded_files ADD COLUMN itemId TEXT`); } catch {}
+  try { db.run(`CREATE UNIQUE INDEX IF NOT EXISTS ux_uploaded_files_sha ON uploaded_files(sha256)`); } catch {}
+  // Documents local file linkage
+  try { db.run(`ALTER TABLE documents ADD COLUMN localFileId INTEGER`); } catch {}
+  try { db.run(`ALTER TABLE documents ADD COLUMN localUrl TEXT`); } catch {}
 }
 
 function persist(db) {
-  const data = db.export();
-  const buffer = Buffer.from(data);
-  fs.writeFileSync(DB_PATH, buffer);
+  try {
+    if (db && typeof db.persist === 'function') {
+      db.persist();
+      return;
+    }
+  } catch {}
+  try {
+    if (db && typeof db.export === 'function') {
+      const data = db.export();
+      const buffer = Buffer.from(data);
+      fs.writeFileSync(DB_PATH, buffer);
+    }
+  } catch {}
 }
 
 // Resolve user roles using DB roles and environment. Groups not evaluated server-side.
@@ -2292,10 +3578,7 @@ function resolveUserRoles(email, db) {
     if (superAdmins.includes(e)) roles.push('SuperAdmin');
   } catch {}
   try {
-    const rows = db ? db.prepare && db : null;
-    const fromDb = (() => {
-      try { return (db ? (function(){ const rows = []; const stmt = db.prepare('SELECT role FROM roles WHERE LOWER(email)=LOWER(?)'); try { stmt.bind([e]); while (stmt.step()) rows.push(stmt.getAsObject()); } finally { stmt.free(); } return rows; })() : []); } catch { return []; }
-    })();
+    const fromDb = (function(){ try { return all('SELECT role FROM roles WHERE LOWER(email)=LOWER(?)', [e]); } catch { return []; } })();
     for (const r of fromDb) {
       const role = String(r.role);
       if (!roles.includes(role)) roles.push(role);
