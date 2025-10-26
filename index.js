@@ -2338,6 +2338,35 @@ async function start() {
       res.status(500).json({ error: 'failed' });
     }
   });
+  // Settings API: Legal consent document (global)
+  app.get('/api/settings/legal-consent', (req, res) => {
+    try {
+      const idRaw = getSetting('legal_consent_file_id', null);
+      const id = idRaw != null ? Number(idRaw) : null;
+      if (!id || !Number.isFinite(id)) return res.json({ fileId: null, url: null, name: null });
+      const row = one('SELECT id, original_name FROM uploaded_files WHERE id=?', [id]);
+      if (!row) return res.json({ fileId: null, url: null, name: null });
+      return res.json({ fileId: row.id, url: `/api/files/${row.id}`, name: row.original_name || 'document.pdf' });
+    } catch (e) {
+      res.status(500).json({ error: 'failed' });
+    }
+  });
+  app.put('/api/settings/legal-consent', (req, res) => {
+    try {
+      const fileId = req.body && req.body.fileId != null ? Number(req.body.fileId) : null;
+      if (fileId === null) {
+        // clear
+        setSetting('legal_consent_file_id', '');
+        return res.json({ fileId: null });
+      }
+      if (!Number.isFinite(fileId) || fileId <= 0) return res.status(400).json({ error: 'invalid_file_id' });
+      const exists = one('SELECT id FROM uploaded_files WHERE id=?', [fileId]);
+      if (!exists) return res.status(404).json({ error: 'file_not_found' });
+      const ok = setSetting('legal_consent_file_id', String(fileId));
+      if (!ok) return res.status(500).json({ error: 'save_failed' });
+      res.json({ fileId });
+    } catch (e) { res.status(500).json({ error: 'failed' }); }
+  });
   // Businesses
   app.get('/api/businesses', (_req, res) => {
     const rows = all('SELECT id, name, code, isActive, description FROM businesses ORDER BY name');

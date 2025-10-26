@@ -6,7 +6,11 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "dev": "node index.js"
+    "dev": "node index.js",
+    "lint": "eslint . --ext .js",
+    "lint:fix": "eslint . --ext .js --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "dependencies": {
     "bcrypt": "^6.0.0",
@@ -27,8 +31,12 @@
     "yamljs": "^0.3.0",
     "ajv": "^8.12.0",
     "ajv-formats": "^2.1.1",
-    "https-proxy-agent": "^7.0.2"
-    ,
+    "https-proxy-agent": "^7.0.2",
     "mime-types": "^2.1.35"
+  },
+  "devDependencies": {
+    "eslint": "^8.57.0",
+    "eslint-config-prettier": "^9.1.0",
+    "prettier": "^3.3.3"
   }
 }
