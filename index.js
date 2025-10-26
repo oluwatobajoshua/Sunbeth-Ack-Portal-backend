@@ -121,7 +121,8 @@ async function start() {
   // ...existing code...
 
   // --- External User Auth: Password Hashing ---
-  const bcrypt = require('bcrypt');
+  let bcrypt;
+  try { bcrypt = require('bcrypt'); } catch { try { bcrypt = require('bcryptjs'); } catch { bcrypt = null; } }
   const BCRYPT_ROUNDS = 12;
   // --- Password Reset for External Users ---
   // In-memory store for reset tokens (for demo; use DB in production)
@@ -371,11 +372,28 @@ async function start() {
       },
       credentials: true,
       methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
-      allowedHeaders: ['Content-Type','Authorization','X-Requested-With']
+      allowedHeaders: ['Content-Type','Authorization','X-Requested-With','X-Admin-Email','X-User-Email']
     }));
   } catch { app.use(cors()); }
   // JSON parsing with sane limit
   app.use(express.json({ limit: '2mb' }));
+  // Lightweight JSON schema validator using Ajv (per-route)
+  let ajv = null;
+  try {
+    const Ajv = require('ajv');
+    const addFormats = require('ajv-formats');
+    ajv = new Ajv({ allErrors: true, removeAdditional: true, coerceTypes: true });
+    try { addFormats(ajv); } catch {}
+  } catch {}
+  const validate = (schema, source = 'body') => (req, res, next) => {
+    try {
+      if (!ajv || !schema) return next();
+      const v = ajv.compile(schema);
+      const data = source === 'query' ? req.query : (source === 'params' ? req.params : req.body);
+      if (v(data || {})) return next();
+      return res.status(400).json({ error: 'invalid_request', details: (v.errors || []).slice(0, 3) });
+    } catch { return next(); }
+  };
   // Basic API rate limiting (custom endpoints may implement their own as well)
   try {
     const rateLimit = require('express-rate-limit');
@@ -2343,29 +2361,466 @@ async function start() {
     try {
       const idRaw = getSetting('legal_consent_file_id', null);
       const id = idRaw != null ? Number(idRaw) : null;
-      if (!id || !Number.isFinite(id)) return res.json({ fileId: null, url: null, name: null });
-      const row = one('SELECT id, original_name FROM uploaded_files WHERE id=?', [id]);
-      if (!row) return res.json({ fileId: null, url: null, name: null });
-      return res.json({ fileId: row.id, url: `/api/files/${row.id}`, name: row.original_name || 'document.pdf' });
+      if (!id || !Number.isFinite(id)) return res.json({ fileId: null, url: null, name: null, version: null, sha256: null, size: null, mime: null });
+      const row = one('SELECT id, original_name, sha256, size, mime FROM uploaded_files WHERE id=?', [id]);
+      if (!row) return res.json({ fileId: null, url: null, name: null, version: null, sha256: null, size: null, mime: null });
+      // Try to enrich with legal version metadata if available
+      let version = null;
+      try {
+        const vIdRaw = getSetting('legal_consent_version_id', null);
+        const vId = vIdRaw != null ? Number(vIdRaw) : null;
+        if (vId && Number.isFinite(vId)) {
+          const v = one('SELECT version FROM legal_doc_versions WHERE id=?', [vId]);
+          if (v && v.version != null) version = Number(v.version);
+        }
+      } catch {}
+      return res.json({ fileId: row.id, url: `/api/files/${row.id}`, name: row.original_name || 'document.pdf', version, sha256: row.sha256 || null, size: row.size || null, mime: row.mime || null });
     } catch (e) {
       res.status(500).json({ error: 'failed' });
     }
   });
-  app.put('/api/settings/legal-consent', (req, res) => {
+  app.put('/api/settings/legal-consent', validate({ type: 'object', required: ['fileId'], additionalProperties: true, properties: { fileId: { anyOf: [{ type: 'integer' }, { type: 'null' }] } } }), (req, res) => {
     try {
       const fileId = req.body && req.body.fileId != null ? Number(req.body.fileId) : null;
       if (fileId === null) {
         // clear
         setSetting('legal_consent_file_id', '');
+        try { setSetting('legal_consent_version_id', ''); } catch {}
         return res.json({ fileId: null });
       }
       if (!Number.isFinite(fileId) || fileId <= 0) return res.status(400).json({ error: 'invalid_file_id' });
-      const exists = one('SELECT id FROM uploaded_files WHERE id=?', [fileId]);
+      const exists = one('SELECT id, original_name, sha256, size, mime FROM uploaded_files WHERE id=?', [fileId]);
       if (!exists) return res.status(404).json({ error: 'file_not_found' });
       const ok = setSetting('legal_consent_file_id', String(fileId));
       if (!ok) return res.status(500).json({ error: 'save_failed' });
+      // Record a new legal document version if not present for this sha256
+      try {
+        const sha = String(exists.sha256 || '');
+        let verRow = null;
+        if (sha) {
+          verRow = one('SELECT id, version FROM legal_doc_versions WHERE sha256=? ORDER BY version DESC LIMIT 1', [sha]);
+        }
+        if (!verRow) {
+          // Determine next version number
+          const maxVer = one('SELECT MAX(version) AS v FROM legal_doc_versions');
+          const nextVer = (maxVer && maxVer.v != null) ? (Number(maxVer.v) + 1) : 1;
+          const now = new Date().toISOString();
+          const createdBy = String((req.headers['x-user-email'] || req.headers['x-admin-email'] || '')).toLowerCase() || null;
+          db.run(`INSERT INTO legal_doc_versions (file_id, sha256, name, size, mime, effective_from, version, created_at, created_by)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                  [fileId, exists.sha256 || null, exists.original_name || null, exists.size || null, exists.mime || null, now, nextVer, now, createdBy]);
+          const vId = one('SELECT last_insert_rowid() as id')?.id;
+          if (vId) setSetting('legal_consent_version_id', String(vId));
+        } else {
+          // If already versioned for this sha, just mark current as active
+          setSetting('legal_consent_version_id', String(verRow.id));
+        }
+      } catch {}
       res.json({ fileId });
     } catch (e) { res.status(500).json({ error: 'failed' }); }
+  });
+
+  // Consent receipts API
+  // Record a consent for the current legal doc version
+  app.post('/api/consents', validate({ type: 'object', required: ['email'], additionalProperties: true, properties: { email: { type: 'string', format: 'email' }, batchId: { type: ['string','null'] }, meta: { type: ['object','null'] } } }), (req, res) => {
+    try {
+      const tenantId = req?.tenant?.id || null;
+      const emailRaw = (req.body?.email || req.headers['x-user-email'] || req.headers['x-admin-email'] || '').toString();
+      const email = String(emailRaw || '').trim().toLowerCase();
+      const batchId = req.body?.batchId != null ? String(req.body.batchId) : null;
+      if (!email || !email.includes('@')) return res.status(400).json({ error: 'email_required' });
+      // Resolve active legal doc
+      const fileIdRaw = getSetting('legal_consent_file_id', null);
+      const fileId = fileIdRaw != null ? Number(fileIdRaw) : null;
+      if (!fileId || !Number.isFinite(fileId)) return res.status(400).json({ error: 'legal_doc_not_configured' });
+      const fi = one('SELECT id, original_name, sha256, size, mime FROM uploaded_files WHERE id=?', [fileId]);
+      if (!fi) return res.status(404).json({ error: 'legal_doc_file_missing' });
+      const vIdRaw = getSetting('legal_consent_version_id', null);
+      const legalVersionId = vIdRaw != null ? Number(vIdRaw) : null;
+      let legalVersion = null;
+      if (legalVersionId && Number.isFinite(legalVersionId)) {
+        const v = one('SELECT version FROM legal_doc_versions WHERE id=?', [legalVersionId]);
+        if (v && v.version != null) legalVersion = Number(v.version);
+      }
+      const now = new Date().toISOString();
+      const ip = (req && (req.ip || req.headers['x-forwarded-for'])) ? String(req.ip || req.headers['x-forwarded-for']) : '';
+      const ua = req && req.get ? String(req.get('User-Agent') || '') : '';
+      const receiptId = `rcpt_${Math.random().toString(36).slice(2)}_${Date.now().toString(36)}`;
+      let receiptSig = null;
+      try {
+        const secret = process.env.CONSENT_RECEIPT_SECRET || '';
+        if (secret) {
+          const base = `${tenantId || ''}|${email}|${batchId || ''}|${fileId}|${fi.sha256 || ''}|${now}|${receiptId}`;
+          receiptSig = require('crypto').createHmac('sha256', secret).update(base).digest('hex');
+        }
+      } catch {}
+      const meta = req.body?.meta && typeof req.body.meta === 'object' ? JSON.stringify(req.body.meta) : null;
+      db.run(`INSERT INTO consents (tenant_id, email, batch_id, consented_at, file_id, file_sha256, file_name, file_size, file_mime, legal_version_id, legal_version, ip, ua, receipt_id, receipt_sig, meta_json)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              [tenantId, email, batchId, now, fileId, fi.sha256 || null, fi.original_name || null, fi.size || null, fi.mime || null, legalVersionId || null, legalVersion || null, ip, ua, receiptId, receiptSig, meta]);
+      persist(db);
+      audit(req, 'legal_consent', email, 'ok', { batchId, fileId, version: legalVersion, receiptId });
+      return res.json({ ok: true, receiptId, consentedAt: now, fileId, sha256: fi.sha256 || null, version: legalVersion });
+    } catch (e) {
+      try { audit(req, 'legal_consent', req?.body?.email, 'error', { message: e.message }); } catch {}
+      res.status(500).json({ error: 'consent_failed', details: e?.message || String(e) });
+    }
+  });
+
+  // Receipt lookup (returns consent record by receipt id)
+  app.get('/api/receipts/:id', (req, res) => {
+    try {
+      const id = String(req.params.id || '').trim();
+      if (!id) return res.status(400).json({ error: 'id_required' });
+      const r = one(`SELECT id, tenant_id as tenantId, email, batch_id as batchId, consented_at as consentedAt,
+                            file_id as fileId, file_sha256 as sha256, file_name as name, file_size as size, file_mime as mime,
+                            legal_version_id as legalVersionId, legal_version as version, ip, ua, receipt_id as receiptId, receipt_sig as receiptSig
+                     FROM consents WHERE receipt_id=?`, [id]);
+      if (!r) return res.status(404).json({ error: 'not_found' });
+      res.json(r);
+    } catch (e) { res.status(500).json({ error: 'lookup_failed' }); }
+  });
+
+  // Admin export (SuperAdmin only via /api/admin/* guard earlier)
+  app.get('/api/admin/consents/export', (req, res) => {
+    try {
+      const tenantId = req.query.tenantId != null ? Number(req.query.tenantId) : null;
+      const email = String(req.query.email || '').trim().toLowerCase();
+      const batchId = String(req.query.batchId || '').trim();
+      const since = String(req.query.since || '').trim();
+      const until = String(req.query.until || '').trim();
+      const conds = [];
+      const params = [];
+      if (tenantId != null && !Number.isNaN(tenantId)) { conds.push('tenant_id=?'); params.push(tenantId); }
+      if (email) { conds.push('LOWER(email)=?'); params.push(email); }
+      if (batchId) { conds.push('batch_id=?'); params.push(batchId); }
+      if (since) { conds.push('consented_at>=?'); params.push(since); }
+      if (until) { conds.push('consented_at<=?'); params.push(until); }
+      const where = conds.length ? ('WHERE ' + conds.join(' AND ')) : '';
+      const rows = all(`SELECT id, tenant_id as tenantId, email, batch_id as batchId, consented_at as consentedAt, file_id as fileId, file_sha256 as sha256, file_name as name, file_size as size, file_mime as mime, legal_version_id as legalVersionId, legal_version as version, ip, ua, receipt_id as receiptId FROM consents ${where} ORDER BY id DESC`, params);
+      res.json({ consents: rows });
+    } catch (e) { res.status(500).json({ error: 'export_failed' }); }
+  });
+
+  // Court-ready PDF report for consents
+  app.get('/api/admin/consents/report', async (req, res) => {
+    try {
+      const format = String(req.query.format || 'pdf').toLowerCase();
+      if (format !== 'pdf') return res.status(400).json({ error: 'unsupported_format', hint: 'Use ?format=pdf' });
+      const tenantId = req.query.tenantId != null ? Number(req.query.tenantId) : null;
+      const email = String(req.query.email || '').trim().toLowerCase();
+      const batchId = String(req.query.batchId || '').trim();
+      const since = String(req.query.since || '').trim();
+      const until = String(req.query.until || '').trim();
+      const conds = [];
+      const params = [];
+      if (tenantId != null && !Number.isNaN(tenantId)) { conds.push('tenant_id=?'); params.push(tenantId); }
+      if (email) { conds.push('LOWER(email)=?'); params.push(email); }
+      if (batchId) { conds.push('batch_id=?'); params.push(batchId); }
+      if (since) { conds.push('consented_at>=?'); params.push(since); }
+      if (until) { conds.push('consented_at<=?'); params.push(until); }
+      const where = conds.length ? ('WHERE ' + conds.join(' AND ')) : '';
+      const rows = all(`SELECT id, tenant_id as tenantId, email, batch_id as batchId, consented_at as consentedAt, file_id as fileId, file_sha256 as sha256, file_name as name, file_size as size, file_mime as mime, legal_version_id as legalVersionId, legal_version as version, ip, ua, receipt_id as receiptId, receipt_sig as receiptSig FROM consents ${where} ORDER BY id ASC`, params);
+
+      const PDFDocument = require('pdfkit');
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Cache-Control', 'no-store');
+      const doc = new PDFDocument({ size: 'A4', margin: 50 });
+      doc.info.Title = 'Consent and Acknowledgement Report';
+      doc.info.Author = 'Sunbeth Compliance Portal';
+      doc.pipe(res);
+
+      const title = 'Consent and Acknowledgement Report';
+      doc.fontSize(18).text(title, { align: 'center' });
+      doc.moveDown(0.5);
+      doc.fontSize(10).fillColor('#666').text(`Generated: ${new Date().toISOString()}`);
+      if (tenantId != null) doc.text(`Tenant ID: ${tenantId}`);
+      if (email) doc.text(`Filter Email: ${email}`);
+      if (batchId) doc.text(`Batch ID: ${batchId}`);
+      if (since || until) doc.text(`Range: ${since || '—'} to ${until || '—'}`);
+      doc.moveDown(0.5);
+      doc.fillColor('#000');
+
+      // Summary
+      const total = rows.length;
+      const uniqueUsers = new Set(rows.map(r => r.email)).size;
+      doc.fontSize(12).text('Summary', { underline: true });
+      doc.fontSize(10).text(`Total consents: ${total}`);
+      doc.text(`Unique users: ${uniqueUsers}`);
+      doc.moveDown(0.5);
+
+      // Table header
+      const headers = ['Date/Time (UTC)', 'User', 'Batch', 'File Name', 'SHA-256', 'Version', 'Receipt ID'];
+      const widths = [100, 130, 70, 120, 170, 50, 160];
+      const startX = doc.x;
+      const startY = doc.y + 6;
+      doc.fontSize(9).fillColor('#111');
+      headers.forEach((h, i) => { doc.text(h, startX + widths.slice(0, i).reduce((a,b)=>a+b, 0), startY, { width: widths[i] }); });
+      doc.moveDown(1.2);
+      doc.moveTo(50, startY + 12).lineTo(545, startY + 12).strokeColor('#999').stroke();
+      doc.strokeColor('#000');
+
+      // Rows
+      let y = startY + 16;
+      const lineHeight = 36;
+      for (const r of rows) {
+        if (y > 760) { doc.addPage(); y = 60; }
+        const cols = [
+          (r.consentedAt || '').replace('T',' ').replace('Z','Z'),
+          r.email || '',
+          String(r.batchId || ''),
+          r.name || '',
+          (r.sha256 || '').slice(0, 64),
+          String(r.version != null ? r.version : ''),
+          r.receiptId || ''
+        ];
+        cols.forEach((c, i) => {
+          doc.text(String(c), startX + widths.slice(0, i).reduce((a,b)=>a+b, 0), y, { width: widths[i] });
+        });
+        y += lineHeight - 18;
+      }
+
+      // Certification section
+      if (y > 680) { doc.addPage(); y = 60; }
+      doc.moveDown(2);
+      doc.fontSize(12).text('Certification', { underline: true });
+      doc.fontSize(10).text('This report was generated by the Sunbeth Compliance Portal. Each record represents a user consent or acknowledgement.');
+      doc.text('Where configured, a receipt signature (HMAC-SHA256) is generated using a server-held secret to attest integrity.');
+      doc.text('Fields include: timestamp, user identifier, associated batch (if any), file name, file hash (SHA-256), document version, and receipt ID.');
+      if (process.env.CONSENT_RECEIPT_SECRET) {
+        doc.text('\nReceipt signatures were enabled at generation time.');
+      } else {
+        doc.text('\nNote: Receipt signatures were not enabled at generation time.');
+      }
+      doc.moveDown(1);
+      doc.text(`Records included: ${rows.length}`);
+
+      // Footer
+      doc.moveDown(2);
+      doc.fillColor('#666').fontSize(8).text('Sunbeth Compliance Portal • https://sunbeth.example.com', { align: 'center' });
+
+      doc.end();
+    } catch (e) {
+      res.status(500).json({ error: 'report_failed', details: e?.message || String(e) });
+    }
+  });
+
+  // --- Policy Scheduling (HR annual/recurring acknowledgements) ---
+  // Admin CRUD for policy rules (tenant-aware; SuperAdmin guard already applied for /api/admin/*)
+  app.get('/api/admin/policies', (req, res) => {
+    try {
+      const tenantId = req.query.tenantId != null ? Number(req.query.tenantId) : (req?.tenant?.id || null);
+      const where = tenantId != null ? 'WHERE tenant_id=?' : '';
+      const params = tenantId != null ? [tenantId] : [];
+      const rows = all(`SELECT id, name, description, frequency, interval_days as intervalDays, required, file_id as fileId, sha256, tenant_id as tenantId, active, start_on as startOn, due_in_days as dueInDays, grace_days as graceDays, created_at as createdAt, updated_at as updatedAt FROM policy_rules ${where} ORDER BY id DESC`, params);
+      // attach fileIds mapping (if exists)
+      const policies = rows.map(r => {
+        const files = (function(){ try { return all('SELECT file_id as fileId, sha256 FROM policy_rule_files WHERE policy_rule_id=? ORDER BY file_id', [r.id]); } catch { return []; } })();
+        const fileIds = files.length ? files.map(f => Number(f.fileId)) : (r.fileId ? [Number(r.fileId)] : []);
+        return { ...r, required: !!r.required, active: !!r.active, fileIds };
+      });
+      res.json({ policies });
+    } catch (e) { res.status(500).json({ error: 'list_failed' }); }
+  });
+  app.post('/api/admin/policies', validate({ type: 'object', required: ['name'], additionalProperties: true, properties: { name: { type: 'string', minLength: 1 }, description: { type: ['string','null'] }, frequency: { type: 'string' }, intervalDays: { type: ['integer','null'] }, required: { type: 'boolean' }, fileId: { type: ['integer','null'] }, fileIds: { type: 'array', items: { type: 'integer', minimum: 1 } }, startOn: { type: ['string','null'] }, dueInDays: { type: ['integer','null'] }, graceDays: { type: ['integer','null'] }, active: { type: 'boolean' } } }), (req, res) => {
+    try {
+      const tenantId = req?.tenant?.id || null;
+      const { name, description=null, frequency='annual', intervalDays=null, required=true, fileId=null, fileIds=null, startOn=null, dueInDays=30, graceDays=0, active=true } = req.body || {};
+      const ids = Array.isArray(fileIds) ? fileIds.map(Number).filter(n => Number.isFinite(n) && n>0) : (fileId ? [Number(fileId)] : []);
+      if (!name || ids.length === 0) return res.status(400).json({ error: 'name_and_files_required' });
+      // validate files
+      const valid = ids.map(id => one('SELECT id, sha256 FROM uploaded_files WHERE id=?', [id])).filter(Boolean);
+      if (valid.length !== ids.length) return res.status(404).json({ error: 'file_not_found' });
+      const first = valid[0];
+      const now = new Date().toISOString();
+      db.run(`INSERT INTO policy_rules (tenant_id, name, description, frequency, interval_days, required, file_id, sha256, active, start_on, due_in_days, grace_days, created_at, updated_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              [tenantId, String(name), description, String(frequency), intervalDays!=null?Number(intervalDays):null, required?1:0, Number(first.id), first.sha256 || null, active?1:0, startOn, Number(dueInDays)||0, Number(graceDays)||0, now, now]);
+      const id = one('SELECT last_insert_rowid() as id')?.id;
+      // insert mapping rows
+      for (const fid of ids) {
+        try {
+          const rec = one('SELECT sha256 FROM uploaded_files WHERE id=?', [fid]);
+          db.run('INSERT OR IGNORE INTO policy_rule_files (policy_rule_id, file_id, sha256) VALUES (?, ?, ?)', [id, fid, rec?.sha256 || null]);
+        } catch {}
+      }
+      persist(db);
+      res.json({ id });
+    } catch (e) { res.status(500).json({ error: 'create_failed' }); }
+  });
+  app.put('/api/admin/policies/:id', validate({ type: 'object', additionalProperties: true, properties: { name: { type: ['string','null'] }, description: { type: ['string','null'] }, frequency: { type: ['string','null'] }, intervalDays: { type: ['integer','null'] }, required: { type: ['boolean','null'] }, fileId: { type: ['integer','null'] }, fileIds: { type: 'array', items: { type: 'integer', minimum: 1 } }, active: { type: ['boolean','null'] }, startOn: { type: ['string','null'] }, dueInDays: { type: ['integer','null'] }, graceDays: { type: ['integer','null'] } } }), (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const cur = one('SELECT * FROM policy_rules WHERE id=?', [id]);
+      if (!cur) return res.status(404).json({ error: 'not_found' });
+      const { name, description, frequency, intervalDays, required, fileId, fileIds, active, startOn, dueInDays, graceDays } = req.body || {};
+      let sha = cur.sha256;
+      if (fileId != null && Number(fileId) !== cur.file_id) {
+        const f = one('SELECT sha256 FROM uploaded_files WHERE id=?', [Number(fileId)]);
+        if (!f) return res.status(404).json({ error: 'file_not_found' });
+        sha = f.sha256 || null;
+      }
+      const now = new Date().toISOString();
+      db.run(`UPDATE policy_rules SET name=COALESCE(?, name), description=COALESCE(?, description), frequency=COALESCE(?, frequency), interval_days=COALESCE(?, interval_days), required=COALESCE(?, required), file_id=COALESCE(?, file_id), sha256=COALESCE(?, sha256), active=COALESCE(?, active), start_on=COALESCE(?, start_on), due_in_days=COALESCE(?, due_in_days), grace_days=COALESCE(?, grace_days), updated_at=? WHERE id=?`,
+        [name ?? null, description ?? null, frequency ?? null, intervalDays ?? null, required!=null?(required?1:0):null, fileId ?? null, sha, active!=null?(active?1:0):null, startOn ?? null, dueInDays ?? null, graceDays ?? null, now, id]);
+      // Replace mapping if fileIds provided
+      if (Array.isArray(fileIds)) {
+        try { db.run('DELETE FROM policy_rule_files WHERE policy_rule_id=?', [id]); } catch {}
+        const ids = fileIds.map(Number).filter(n => Number.isFinite(n) && n>0);
+        for (const fid of ids) {
+          try {
+            const rec = one('SELECT sha256 FROM uploaded_files WHERE id=?', [fid]);
+            db.run('INSERT OR IGNORE INTO policy_rule_files (policy_rule_id, file_id, sha256) VALUES (?, ?, ?)', [id, fid, rec?.sha256 || null]);
+          } catch {}
+        }
+        // ensure primary file_id follows first of list, for backward compatibility
+        if (ids.length) {
+          const first = ids[0];
+          const f = one('SELECT sha256 FROM uploaded_files WHERE id=?', [first]);
+          db.run('UPDATE policy_rules SET file_id=?, sha256=? WHERE id=?', [first, f?.sha256 || null, id]);
+        }
+      }
+      persist(db);
+      res.json({ ok: true });
+    } catch (e) { res.status(500).json({ error: 'update_failed' }); }
+  });
+  app.delete('/api/admin/policies/:id', (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      db.run('DELETE FROM policy_rules WHERE id=?', [id]);
+      persist(db);
+      res.json({ ok: true });
+    } catch (e) { res.status(500).json({ error: 'delete_failed' }); }
+  });
+
+  // Calculate due policies for a user (email required)
+  app.get('/api/policies/due', validate({ type: 'object', required: ['email'], additionalProperties: true, properties: { email: { type: 'string', format: 'email' } } }, 'query'), (req, res) => {
+    try {
+      const tenantId = req?.tenant?.id || null;
+      const email = String(req.query.email || '').trim().toLowerCase();
+      if (!email || !email.includes('@')) return res.status(400).json({ error: 'email_required' });
+  const policies = all(`SELECT id, name, description, frequency, interval_days as intervalDays, required, file_id as fileId, sha256, tenant_id as tenantId, active, start_on as startOn, due_in_days as dueInDays, grace_days as graceDays FROM policy_rules WHERE active=1 AND (tenant_id IS ? OR tenant_id=?)`, [tenantId, tenantId]);
+      const now = new Date();
+      const freqDays = (p) => {
+        const f = String(p.frequency || 'annual').toLowerCase();
+        if (f === 'daily') return 1;
+        if (f === 'weekly') return 7;
+        if (f === 'monthly') return 30;
+        if (f === 'quarterly') return 90;
+        if (f === 'semiannual') return 182;
+        if (f === 'annual' || f === 'annually' || f === 'yearly') return 365;
+        if (f === 'custom' && p.intervalDays) return Math.max(1, Number(p.intervalDays));
+        return 365;
+      };
+      const dueList = [];
+      for (const p of policies) {
+        // Determine files: mapping table or fallback to single fileId
+        const mapped = (function(){ try { return all('SELECT file_id as fileId FROM policy_rule_files WHERE policy_rule_id=?', [p.id]); } catch { return []; } })();
+        const files = mapped.length ? mapped.map(r => Number(r.fileId)) : (p.fileId ? [Number(p.fileId)] : []);
+        if (!files.length) continue;
+        // For each file in this policy, compute due separately
+        for (const fid of files) {
+          const last = one(`SELECT MAX(a.ackDate) as lastAck
+                            FROM acks a
+                            JOIN documents d ON d.id=a.documentId
+                            WHERE d.localFileId=? AND LOWER(a.email)=LOWER(?)`, [fid, email]);
+          const lastAck = last && last.lastAck ? new Date(String(last.lastAck)) : null;
+        const startOn = p.startOn ? new Date(String(p.startOn)) : null;
+        const ndays = freqDays(p);
+        let nextDueFrom = startOn || lastAck;
+        if (!nextDueFrom) {
+          // Default baseline: today minus ndays to mark as due
+          nextDueFrom = new Date(now.getTime() - ndays*24*60*60*1000 - 1);
+        }
+        const nextDue = new Date(nextDueFrom.getTime() + ndays*24*60*60*1000);
+        const graceEnd = new Date(nextDue.getTime() + (Number(p.graceDays)||0)*24*60*60*1000);
+        const isDue = now >= nextDue;
+        const isOverdue = now > graceEnd;
+        if (isDue) {
+          dueList.push({
+            policyId: p.id,
+            name: p.name,
+            description: p.description,
+            required: !!p.required,
+            fileId: fid,
+            frequency: p.frequency,
+            intervalDays: p.intervalDays || null,
+            lastAck: lastAck ? lastAck.toISOString() : null,
+            nextDue: nextDue.toISOString(),
+            graceUntil: graceEnd.toISOString(),
+            overdue: isOverdue
+          });
+        }
+        }
+      }
+      res.json({ due: dueList });
+    } catch (e) { res.status(500).json({ error: 'resolve_failed' }); }
+  });
+
+  // Acknowledge a policy document by fileId (creates a synthetic batch/doc if necessary)
+  // Body: { email: string, fileId: number }
+  app.post('/api/policies/ack', validate({ type: 'object', required: ['email','fileId'], additionalProperties: true, properties: { email: { type: 'string', format: 'email' }, fileId: { type: 'integer', minimum: 1 } } }), (req, res) => {
+    try {
+      const email = String(req.body?.email || '').trim().toLowerCase();
+      const fileId = Number(req.body?.fileId);
+      if (!email || !email.includes('@')) return res.status(400).json({ error: 'email_required' });
+      if (!Number.isFinite(fileId) || fileId <= 0) return res.status(400).json({ error: 'invalid_fileId' });
+
+      // Enforce legal consent: require a consent on the current active legal doc version for this user
+      try {
+        const vIdRaw = getSetting('legal_consent_version_id', null);
+        const activeVersionId = vIdRaw != null ? Number(vIdRaw) : null;
+        const lfIdRaw = getSetting('legal_consent_file_id', null);
+        const activeFileId = lfIdRaw != null ? Number(lfIdRaw) : null;
+        if (activeVersionId && Number.isFinite(activeVersionId)) {
+          const exists = one('SELECT id FROM consents WHERE LOWER(email)=LOWER(?) AND legal_version_id=?', [email, activeVersionId]);
+          if (!exists) {
+            return res.status(403).json({ error: 'legal_consent_required', legalFileId: activeFileId || null, legalVersionId: activeVersionId });
+          }
+        }
+      } catch {}
+
+      // Ensure the uploaded file exists
+      const file = one('SELECT id, original_name, mime FROM uploaded_files WHERE id=?', [fileId]);
+      if (!file) return res.status(404).json({ error: 'file_not_found' });
+
+      // Find or create a synthetic batch to host policy-only docs
+      let batch = one("SELECT id FROM batches WHERE name='Policy Acknowledgements' LIMIT 1");
+      if (!batch) {
+        const now = new Date().toISOString().substring(0,10);
+        db.run("INSERT INTO batches (name, startDate, dueDate, status, description) VALUES ('Policy Acknowledgements', ?, NULL, 1, 'Synthetic batch for policy acknowledgements')", [now]);
+        const idRow = one('SELECT last_insert_rowid() as id');
+        batch = { id: idRow?.id };
+      }
+      const batchId = Number(batch.id);
+
+      // Find or create a document entry referencing this file
+      let doc = one('SELECT id FROM documents WHERE batchId=? AND localFileId=?', [batchId, fileId]);
+      if (!doc) {
+        const localUrl = `/api/files/${fileId}`;
+        const title = file.original_name || 'Policy Document';
+        db.run('INSERT INTO documents (batchId, title, url, version, requiresSignature, source, localFileId, localUrl) VALUES (?, ?, ?, 1, 0, ?, ?, ?)', [batchId, title, localUrl, 'local', fileId, localUrl]);
+        const idRow = one('SELECT last_insert_rowid() as id');
+        doc = { id: idRow?.id };
+      }
+      const documentId = Number(doc.id);
+
+      // Ensure recipient exists for this batch (helps reporting/joins)
+      const rec = one('SELECT id FROM recipients WHERE batchId=? AND LOWER(email)=LOWER(?)', [batchId, email]);
+      if (!rec) {
+        db.run('INSERT OR IGNORE INTO recipients (batchId, businessId, user, email, displayName) VALUES (?, NULL, ?, ?, ?)', [batchId, email, email, email]);
+      }
+
+      // Idempotent ack
+      db.run('DELETE FROM acks WHERE batchId=? AND documentId=? AND LOWER(email)=LOWER(?)', [batchId, documentId, email]);
+      const nowIso = new Date().toISOString();
+      const ok = exec('INSERT INTO acks (batchId, documentId, email, acknowledged, ackDate) VALUES (?, ?, ?, 1, ?)', [batchId, documentId, email, nowIso]);
+      if (!ok) return res.status(500).json({ error: 'ack_failed' });
+      persist(db);
+      return res.json({ ok: true, batchId, documentId, ackDate: nowIso });
+    } catch (e) {
+      return res.status(500).json({ error: 'ack_failed', details: e?.message || String(e) });
+    }
   });
   // Businesses
   app.get('/api/businesses', (_req, res) => {
@@ -3504,6 +3959,83 @@ function bootstrapSchema(db) {
     FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
   );`);
 
+  // HR policy rules (recurring acknowledgements per document)
+  db.run(`CREATE TABLE IF NOT EXISTS policy_rules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id INTEGER,
+    name TEXT NOT NULL,
+    description TEXT,
+    frequency TEXT DEFAULT 'annual', -- daily|weekly|monthly|quarterly|semiannual|annual|custom
+    interval_days INTEGER,
+    required INTEGER DEFAULT 1,
+    file_id INTEGER NOT NULL,
+    sha256 TEXT,
+    active INTEGER DEFAULT 1,
+    start_on TEXT,
+    due_in_days INTEGER DEFAULT 30,
+    grace_days INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT,
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE SET NULL,
+    FOREIGN KEY (file_id) REFERENCES uploaded_files(id) ON DELETE CASCADE
+  );`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_policy_rules_tenant ON policy_rules(tenant_id);`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_policy_rules_active ON policy_rules(active);`);
+
+  // Mapping table for group policies (multiple files per policy rule)
+  db.run(`CREATE TABLE IF NOT EXISTS policy_rule_files (
+    policy_rule_id INTEGER NOT NULL,
+    file_id INTEGER NOT NULL,
+    sha256 TEXT,
+    PRIMARY KEY (policy_rule_id, file_id),
+    FOREIGN KEY (policy_rule_id) REFERENCES policy_rules(id) ON DELETE CASCADE,
+    FOREIGN KEY (file_id) REFERENCES uploaded_files(id) ON DELETE CASCADE
+  );`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_policy_rule_files_rule ON policy_rule_files(policy_rule_id);`);
+
+  // Legal document versioning (for consent auditing)
+  db.run(`CREATE TABLE IF NOT EXISTS legal_doc_versions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    file_id INTEGER,
+    sha256 TEXT,
+    name TEXT,
+    size INTEGER,
+    mime TEXT,
+    effective_from TEXT, -- ISO
+    version INTEGER,
+    created_at TEXT,
+    created_by TEXT,
+    FOREIGN KEY (file_id) REFERENCES uploaded_files(id) ON DELETE SET NULL
+  );`);
+  db.run(`CREATE UNIQUE INDEX IF NOT EXISTS ux_legal_doc_versions_sha_ver ON legal_doc_versions(sha256, version);`);
+
+  // Consent receipts (per tenant + user + optional batch + legal version)
+  db.run(`CREATE TABLE IF NOT EXISTS consents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id INTEGER,
+    email TEXT NOT NULL,
+    batch_id TEXT,
+    consented_at TEXT,
+    file_id INTEGER,
+    file_sha256 TEXT,
+    file_name TEXT,
+    file_size INTEGER,
+    file_mime TEXT,
+    legal_version_id INTEGER,
+    legal_version INTEGER,
+    ip TEXT,
+    ua TEXT,
+    receipt_id TEXT UNIQUE,
+    receipt_sig TEXT,
+    meta_json TEXT,
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE SET NULL,
+    FOREIGN KEY (file_id) REFERENCES uploaded_files(id) ON DELETE SET NULL,
+    FOREIGN KEY (legal_version_id) REFERENCES legal_doc_versions(id) ON DELETE SET NULL
+  );`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_consents_email ON consents(LOWER(email));`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_consents_tenant ON consents(tenant_id);`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_consents_batch ON consents(batch_id);`);
+
   // Seed a default business for convenience
   db.run("INSERT INTO businesses (name, code, isActive, description) VALUES ('Default Business', 'DEF', 1, 'Auto-created')");
   try { db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('external_support_enabled','0')"); } catch {}
@@ -3576,6 +4108,17 @@ function migrateSchema(db) {
   // Documents local file linkage
   try { db.run(`ALTER TABLE documents ADD COLUMN localFileId INTEGER`); } catch {}
   try { db.run(`ALTER TABLE documents ADD COLUMN localUrl TEXT`); } catch {}
+  // Legal versioning tables (if upgrading)
+  try { db.run(`CREATE TABLE IF NOT EXISTS legal_doc_versions (id INTEGER PRIMARY KEY AUTOINCREMENT, file_id INTEGER, sha256 TEXT, name TEXT, size INTEGER, mime TEXT, effective_from TEXT, version INTEGER, created_at TEXT, created_by TEXT, FOREIGN KEY (file_id) REFERENCES uploaded_files(id) ON DELETE SET NULL);`); } catch {}
+  try { db.run(`CREATE UNIQUE INDEX IF NOT EXISTS ux_legal_doc_versions_sha_ver ON legal_doc_versions(sha256, version);`); } catch {}
+  try { db.run(`CREATE TABLE IF NOT EXISTS consents (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id INTEGER, email TEXT NOT NULL, batch_id TEXT, consented_at TEXT, file_id INTEGER, file_sha256 TEXT, file_name TEXT, file_size INTEGER, file_mime TEXT, legal_version_id INTEGER, legal_version INTEGER, ip TEXT, ua TEXT, receipt_id TEXT UNIQUE, receipt_sig TEXT, meta_json TEXT, FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE SET NULL, FOREIGN KEY (file_id) REFERENCES uploaded_files(id) ON DELETE SET NULL, FOREIGN KEY (legal_version_id) REFERENCES legal_doc_versions(id) ON DELETE SET NULL);`); } catch {}
+  try { db.run(`CREATE INDEX IF NOT EXISTS idx_consents_email ON consents(LOWER(email));`); } catch {}
+  try { db.run(`CREATE INDEX IF NOT EXISTS idx_consents_tenant ON consents(tenant_id);`); } catch {}
+  try { db.run(`CREATE INDEX IF NOT EXISTS idx_consents_batch ON consents(batch_id);`); } catch {}
+  // Policy rules table
+  try { db.run(`CREATE TABLE IF NOT EXISTS policy_rules (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id INTEGER, name TEXT NOT NULL, description TEXT, frequency TEXT DEFAULT 'annual', interval_days INTEGER, required INTEGER DEFAULT 1, file_id INTEGER NOT NULL, sha256 TEXT, active INTEGER DEFAULT 1, start_on TEXT, due_in_days INTEGER DEFAULT 30, grace_days INTEGER DEFAULT 0, created_at TEXT DEFAULT (datetime('now')), updated_at TEXT, FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE SET NULL, FOREIGN KEY (file_id) REFERENCES uploaded_files(id) ON DELETE CASCADE);`); } catch {}
+  try { db.run(`CREATE INDEX IF NOT EXISTS idx_policy_rules_tenant ON policy_rules(tenant_id);`); } catch {}
+  try { db.run(`CREATE INDEX IF NOT EXISTS idx_policy_rules_active ON policy_rules(active);`); } catch {}
 }
 
 function persist(db) {

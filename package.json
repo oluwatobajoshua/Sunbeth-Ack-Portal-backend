@@ -10,9 +10,13 @@
     "lint": "eslint . --ext .js",
     "lint:fix": "eslint . --ext .js --fix",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "test:int": "node --test .\\tests\\*.test.mjs",
+    "test:e2e": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\tests\\smoke-e2e.ps1"
   },
   "dependencies": {
+    "ajv": "^8.12.0",
+    "ajv-formats": "^2.1.1",
     "bcrypt": "^6.0.0",
     "bcryptjs": "^3.0.2",
     "compression": "^1.7.4",
@@ -21,18 +25,17 @@
     "express": "^4.19.2",
     "express-rate-limit": "^7.4.0",
     "helmet": "^7.1.0",
+    "https-proxy-agent": "^7.0.2",
+    "mime-types": "^2.1.35",
     "multer": "^2.0.2",
     "otplib": "^12.0.1",
     "papaparse": "^5.5.3",
+    "pdfkit": "^0.15.0",
     "sql.js": "^1.11.0",
-    "sunbeth-portal-react-ts": "file:..",
+    "sunbeth-sqlite-api": "file:",
     "swagger-ui-express": "^5.0.1",
     "xlsx": "^0.18.5",
-    "yamljs": "^0.3.0",
-    "ajv": "^8.12.0",
-    "ajv-formats": "^2.1.1",
-    "https-proxy-agent": "^7.0.2",
-    "mime-types": "^2.1.35"
+    "yamljs": "^0.3.0"
   },
   "devDependencies": {
     "eslint": "^8.57.0",

@@ -149,6 +149,245 @@ paths:
                 properties:
                   ok: { type: boolean }
                   mfaRequired: { type: boolean }
+  /api/settings/legal-consent:
+    get:
+      summary: Get active legal consent settings
+      responses:
+        '200':
+          description: Current legal consent config
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LegalConsentSettings'
+    put:
+      summary: Update active legal consent settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LegalConsentSettings'
+      responses:
+        '200': { description: Updated }
+  /api/consents:
+    post:
+      summary: Record a user consent for a file
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, fileId]
+              properties:
+                email: { type: string, format: email }
+                fileId: { type: integer }
+                batchId: { type: string, nullable: true }
+                version: { type: integer, nullable: true }
+                ip: { type: string, nullable: true }
+                ua: { type: string, nullable: true }
+      responses:
+        '200':
+          description: Consent recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: integer }
+                  receiptId: { type: string }
+  /api/receipts/{id}:
+    get:
+      summary: Lookup consent by receipt ID
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Consent receipt
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Consent'
+  /api/admin/consents/export:
+    get:
+      summary: Export consents as JSON (admin)
+      parameters:
+        - in: query
+          name: adminEmail
+          schema: { type: string, format: email }
+        - in: query
+          name: tenantId
+          schema: { type: integer, nullable: true }
+        - in: query
+          name: email
+          schema: { type: string, format: email, nullable: true }
+        - in: query
+          name: batchId
+          schema: { type: string, nullable: true }
+        - in: query
+          name: since
+          schema: { type: string, format: date-time, nullable: true }
+        - in: query
+          name: until
+          schema: { type: string, format: date-time, nullable: true }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  consents:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Consent'
+  /api/admin/consents/report:
+    get:
+      summary: Generate court-ready PDF report (admin)
+      parameters:
+        - in: query
+          name: adminEmail
+          schema: { type: string, format: email }
+        - in: query
+          name: format
+          schema: { type: string, enum: [pdf] }
+        - in: query
+          name: tenantId
+          schema: { type: integer, nullable: true }
+        - in: query
+          name: email
+          schema: { type: string, format: email, nullable: true }
+        - in: query
+          name: batchId
+          schema: { type: string, nullable: true }
+        - in: query
+          name: since
+          schema: { type: string, format: date-time, nullable: true }
+        - in: query
+          name: until
+          schema: { type: string, format: date-time, nullable: true }
+      responses:
+        '200':
+          description: PDF stream
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+  /api/admin/policies:
+    get:
+      summary: List policy rules (admin)
+      parameters:
+        - in: query
+          name: adminEmail
+          schema: { type: string, format: email }
+        - in: query
+          name: tenantId
+          schema: { type: integer, nullable: true }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  policies:
+                    type: array
+                    items: { $ref: '#/components/schemas/PolicyRule' }
+    post:
+      summary: Create a policy rule (admin)
+      parameters:
+        - in: query
+          name: adminEmail
+          schema: { type: string, format: email }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PolicyRuleCreate'
+      responses:
+        '200': { description: Created }
+  /api/admin/policies/{id}:
+    put:
+      summary: Update a policy rule (admin)
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+        - in: query
+          name: adminEmail
+          schema: { type: string, format: email }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PolicyRuleUpdate'
+      responses:
+        '200': { description: Updated }
+    delete:
+      summary: Delete a policy rule (admin)
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+        - in: query
+          name: adminEmail
+          schema: { type: string, format: email }
+      responses:
+        '200': { description: Deleted }
+  /api/policies/due:
+    get:
+      summary: Compute due policy acknowledgements for a user
+      parameters:
+        - in: query
+          name: email
+          required: true
+          schema: { type: string, format: email }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  due:
+                    type: array
+                    items: { $ref: '#/components/schemas/DuePolicy' }
+  /api/policies/ack:
+    post:
+      summary: Acknowledge a policy document by fileId
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, fileId]
+              properties:
+                email: { type: string, format: email }
+                fileId: { type: integer }
+      responses:
+        '200': { description: Recorded }
+        '403':
+          description: Legal consent required before acknowledgement
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error: { type: string, enum: [legal_consent_required] }
+                  legalFileId: { type: integer, nullable: true }
+                  legalVersionId: { type: integer, nullable: true }
 components:
   schemas:
     Batch:
@@ -196,3 +435,99 @@ components:
         code: { type: string }
         isActive: { type: boolean }
         description: { type: string }
+    LegalConsentSettings:
+      type: object
+      properties:
+        enabled: { type: boolean }
+        versionId: { type: integer, nullable: true }
+        version: { type: integer, nullable: true }
+        sha256: { type: string, nullable: true }
+        fileId: { type: integer, nullable: true }
+        updatedAt: { type: string, format: date-time, nullable: true }
+    Consent:
+      type: object
+      properties:
+        id: { type: integer }
+        tenantId: { type: integer, nullable: true }
+        email: { type: string, format: email }
+        batchId: { type: string, nullable: true }
+        consentedAt: { type: string, format: date-time }
+        fileId: { type: integer }
+        sha256: { type: string, nullable: true }
+        name: { type: string, nullable: true }
+        size: { type: integer, nullable: true }
+        mime: { type: string, nullable: true }
+        legalVersionId: { type: integer, nullable: true }
+        version: { type: integer, nullable: true }
+        ip: { type: string, nullable: true }
+        ua: { type: string, nullable: true }
+        receiptId: { type: string }
+        receiptSig: { type: string, nullable: true }
+    PolicyRule:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        description: { type: string, nullable: true }
+        frequency: { type: string, enum: [daily, weekly, monthly, quarterly, semiannual, annual, custom] }
+        intervalDays: { type: integer, nullable: true }
+        required: { type: boolean }
+        fileId: { type: integer }
+        fileIds:
+          type: array
+          items: { type: integer }
+        sha256: { type: string, nullable: true }
+        tenantId: { type: integer, nullable: true }
+        active: { type: boolean }
+        startOn: { type: string, format: date, nullable: true }
+        dueInDays: { type: integer, nullable: true }
+        graceDays: { type: integer, nullable: true }
+        createdAt: { type: string, format: date-time, nullable: true }
+        updatedAt: { type: string, format: date-time, nullable: true }
+    PolicyRuleCreate:
+      type: object
+      required: [name, frequency]
+      properties:
+        name: { type: string }
+        description: { type: string, nullable: true }
+        frequency: { type: string, enum: [daily, weekly, monthly, quarterly, semiannual, annual, custom] }
+        intervalDays: { type: integer, nullable: true }
+        required: { type: boolean }
+        fileId: { type: integer, description: Deprecated - use fileIds }
+        fileIds:
+          type: array
+          items: { type: integer }
+        startOn: { type: string, format: date, nullable: true }
+        dueInDays: { type: integer }
+        graceDays: { type: integer }
+        active: { type: boolean }
+    PolicyRuleUpdate:
+      type: object
+      properties:
+        name: { type: string }
+        description: { type: string, nullable: true }
+        frequency: { type: string, enum: [daily, weekly, monthly, quarterly, semiannual, annual, custom] }
+        intervalDays: { type: integer, nullable: true }
+        required: { type: boolean }
+        fileId: { type: integer, description: Deprecated - use fileIds }
+        fileIds:
+          type: array
+          items: { type: integer }
+        startOn: { type: string, format: date, nullable: true }
+        dueInDays: { type: integer }
+        graceDays: { type: integer }
+        active: { type: boolean }
+    DuePolicy:
+      type: object
+      properties:
+        policyId: { type: integer }
+        name: { type: string }
+        description: { type: string, nullable: true }
+        required: { type: boolean }
+        fileId: { type: integer }
+        frequency: { type: string }
+        intervalDays: { type: integer, nullable: true }
+        lastAck: { type: string, format: date-time, nullable: true }
+        nextDue: { type: string, format: date-time }
+        graceUntil: { type: string, format: date-time }
+        overdue: { type: boolean }
