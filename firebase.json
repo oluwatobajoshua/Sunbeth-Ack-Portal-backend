@@ -1,0 +1,9 @@
+{
+  "functions": [
+    {
+      "source": ".",
+      "codebase": "api",
+      "runtime": "nodejs20"
+    }
+  ]
+}

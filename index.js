@@ -112,7 +112,15 @@ const generateRequestId = () => {
   return Math.random().toString(36).substr(2, 9) + Date.now().toString(36);
 };
 
-const IS_SERVERLESS = !!(process.env.VERCEL || process.env.NOW_REGION || process.env.AWS_LAMBDA_FUNCTION_NAME);
+// Detect serverless/platform environments (Vercel, Firebase Functions, Cloud Run, AWS Lambda)
+const IS_SERVERLESS = !!(
+  process.env.VERCEL ||
+  process.env.NOW_REGION ||
+  process.env.AWS_LAMBDA_FUNCTION_NAME ||
+  process.env.FUNCTION_TARGET || // Firebase Functions (Gen1)
+  process.env.FIREBASE_CONFIG ||  // Firebase Functions (Gen2)
+  process.env.K_SERVICE           // Cloud Run
+);
 const DATA_DIR = IS_SERVERLESS ? (process.env.DATA_DIR || '/tmp') : path.join(__dirname, 'data');
 // In serverless, prefer in-memory DB (omit dbPath) or explicitly use /tmp if persistence is desired
 const DB_PATH = IS_SERVERLESS ? (process.env.DB_PATH || '') : path.join(DATA_DIR, 'sunbeth.db');
@@ -3713,6 +3721,14 @@ async function start() {
   }
   // Export app for serverless platforms (Vercel, AWS Lambda via adapter, etc.)
   module.exports = app;
+  // Optional: Export a Firebase Functions-compatible handler when available
+  try {
+    const { onRequest } = require('firebase-functions/v2/https');
+    // Named export for Firebase Functions deployment
+    exports.api = onRequest({ region: process.env.FUNCTION_REGION || 'us-central1' }, app);
+  } catch (_e) {
+    // firebase-functions not installed in this environment; ignore
+  }
 }
 
 function mapBatch(r) {
