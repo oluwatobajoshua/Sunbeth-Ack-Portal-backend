@@ -5,5 +5,22 @@
       "codebase": "api",
       "runtime": "nodejs20"
     }
-  ]
+  ],
+  "hosting": {
+    "public": "public",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "rewrites": [
+      {
+        "source": "/api/**",
+        "function": {
+          "functionId": "api",
+          "region": "us-central1"
+        }
+      }
+    ]
+  }
 }
