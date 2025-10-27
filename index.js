@@ -112,8 +112,10 @@ const generateRequestId = () => {
   return Math.random().toString(36).substr(2, 9) + Date.now().toString(36);
 };
 
-const DATA_DIR = path.join(__dirname, 'data');
-const DB_PATH = path.join(DATA_DIR, 'sunbeth.db');
+const IS_SERVERLESS = !!(process.env.VERCEL || process.env.NOW_REGION || process.env.AWS_LAMBDA_FUNCTION_NAME);
+const DATA_DIR = IS_SERVERLESS ? (process.env.DATA_DIR || '/tmp') : path.join(__dirname, 'data');
+// In serverless, prefer in-memory DB (omit dbPath) or explicitly use /tmp if persistence is desired
+const DB_PATH = IS_SERVERLESS ? (process.env.DB_PATH || '') : path.join(DATA_DIR, 'sunbeth.db');
 
 const PORT = process.env.PORT || 4000;
 
@@ -209,6 +211,10 @@ async function start() {
   };
   const all = (sql, params = []) => {
     try { return db.query(sql, params) || []; } catch (e) { console.error(e); return []; }
+  };
+  // Quiet variant that suppresses console noise for expected/optional tables
+  const allQuiet = (sql, params = []) => {
+    try { return db.query(sql, params) || []; } catch { return []; }
   };
   const one = (sql, params = []) => all(sql, params)[0] || null;
 
@@ -2615,7 +2621,7 @@ async function start() {
       const rows = all(`SELECT id, name, description, frequency, interval_days as intervalDays, required, file_id as fileId, sha256, tenant_id as tenantId, active, start_on as startOn, due_in_days as dueInDays, grace_days as graceDays, created_at as createdAt, updated_at as updatedAt FROM policy_rules ${where} ORDER BY id DESC`, params);
       // attach fileIds mapping (if exists)
       const policies = rows.map(r => {
-        const files = (function(){ try { return all('SELECT file_id as fileId, sha256 FROM policy_rule_files WHERE policy_rule_id=? ORDER BY file_id', [r.id]); } catch { return []; } })();
+        const files = allQuiet('SELECT file_id as fileId, sha256 FROM policy_rule_files WHERE policy_rule_id=? ORDER BY file_id', [r.id]);
         const fileIds = files.length ? files.map(f => Number(f.fileId)) : (r.fileId ? [Number(r.fileId)] : []);
         return { ...r, required: !!r.required, active: !!r.active, fileIds };
       });
@@ -2715,7 +2721,7 @@ async function start() {
       const dueList = [];
       for (const p of policies) {
         // Determine files: mapping table or fallback to single fileId
-        const mapped = (function(){ try { return all('SELECT file_id as fileId FROM policy_rule_files WHERE policy_rule_id=?', [p.id]); } catch { return []; } })();
+        const mapped = allQuiet('SELECT file_id as fileId FROM policy_rule_files WHERE policy_rule_id=?', [p.id]);
         const files = mapped.length ? mapped.map(r => Number(r.fileId)) : (p.fileId ? [Number(p.fileId)] : []);
         if (!files.length) continue;
         // For each file in this policy, compute due separately
@@ -3699,9 +3705,14 @@ async function start() {
     }
   });
 
-  app.listen(PORT, () => {
-    console.log(`SQLite API listening on http://localhost:${PORT}`);
-  });
+  // In traditional server mode, bind to a port. In serverless, export the app as the handler.
+  if (!IS_SERVERLESS) {
+    app.listen(PORT, () => {
+      console.log(`SQLite API listening on http://localhost:${PORT}`);
+    });
+  }
+  // Export app for serverless platforms (Vercel, AWS Lambda via adapter, etc.)
+  module.exports = app;
 }
 
 function mapBatch(r) {
