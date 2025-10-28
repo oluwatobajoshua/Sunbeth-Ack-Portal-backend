@@ -114,3 +114,4 @@ Thumbs.db
 # Application specific
 uploads/
 temp-files/
+.vercel

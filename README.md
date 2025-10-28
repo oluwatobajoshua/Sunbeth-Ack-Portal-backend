@@ -124,11 +124,12 @@ The system includes 15 permission categories:
 
 The server can be configured through environment variables or by modifying the configuration in `index.js`:
 
-- **Port**: Default 4000 (configurable via `PORT` env var)
-- **Database Driver**: Select with `DB_DRIVER` (default `sqlite`)
+- Port: Default 4000 (configurable via `PORT` env var)
+- Database Driver: Select with `DB_DRIVER` (default `sqlite`)
    - `sqlite` uses sql.js + file at `./data/sunbeth.db`
-   - Placeholders exist for `postgres`, `mysql`, `mssql` (add adapters in `src/db/adapter.js`)
-- **CORS**: Enabled for frontend integration
+   - `libsql` connects to Turso via `LIBSQL_URL` + `LIBSQL_AUTH_TOKEN`
+   - `pg` / `supabase` connects to a Postgres database (e.g., Supabase) via one of: `SUPABASE_DB_URL`, `DATABASE_URL`, `PG_CONNECTION_STRING`, or `sunbeth_POSTGRES_*`
+- CORS: Enabled for frontend integration
 
 ## 📊 Logging
 
@@ -158,6 +159,9 @@ The application can be deployed to:
 - `PORT` - Server port (default: 4000)
 - `NODE_ENV` - Environment (development/production)
 - `DB_DRIVER` - Database driver (default: `sqlite`)
+- `SUPABASE_DB_URL` or `DATABASE_URL` - Postgres connection string for Supabase when `DB_DRIVER=pg`
+- `PGSSLMODE` - Set to `require` on Supabase pooled connections (default behavior)
+- `LIBSQL_URL` / `LIBSQL_AUTH_TOKEN` - When `DB_DRIVER=libsql`
 
 ## 🔄 Database Management
 
@@ -166,6 +170,54 @@ The SQLite database is file-based and included in the `data/` directory. For pro
 1. **Backup Strategy**: Regular database backups are recommended
 2. **Migration**: Database schema changes should be handled carefully
 3. **Performance**: Consider indexing for large datasets
+
+### Using Supabase in production (recommended for durability)
+
+1) In the Supabase SQL editor, run the schema in `supabase/schema.sql` from this folder (or copy/paste it).
+
+2) In your Vercel project settings, configure the following Environment Variables and redeploy:
+
+- `DB_DRIVER=pg`
+- `SUPABASE_DB_URL=postgres://USER:PASSWORD@HOST:6543/DB_NAME?sslmode=require` (use the pooled connection string)
+- Optionally `PGSSLMODE=require`
+
+3) No code changes are required in the frontend. The API endpoints remain the same; the backend now persists to Postgres.
+
+### Using Supabase locally (developer confidence test)
+
+Run your local API against the same Supabase (Postgres) database to validate behavior before deploying:
+
+1) Ensure the Supabase schema is created (see `supabase/schema.sql`). Run it once in the Supabase SQL Editor.
+
+2) Create a local env file:
+   - Copy `.env.local.example` to `.env`
+   - Set `DB_DRIVER=pg`
+   - Set one of the Postgres connection strings (prefer `SUPABASE_DB_URL`), e.g.
+     `postgres://USER:PASSWORD@HOST:6543/DBNAME?sslmode=require`
+   - Optionally set `REACT_APP_SUPER_ADMINS=you@example.com` for admin/e2e routes
+
+3) Start the backend locally:
+
+   - `npm install`
+   - `npm start`
+
+   The API will be at http://127.0.0.1:4000.
+
+4) Sanity checks (optional):
+   - Seed sample data tied to your email:
+     - POST http://127.0.0.1:4000/api/seed?email=you@example.com
+   - Read back:
+     - GET http://127.0.0.1:4000/api/batches
+     - GET http://127.0.0.1:4000/api/batches?email=you@example.com
+     - GET http://127.0.0.1:4000/api/stats
+
+5) Optional: Run the Windows E2E smoke test (PowerShell):
+
+   - `npm run test:e2e` (uses `REACT_APP_SUPER_ADMINS` and http://127.0.0.1:4000 by default)
+
+Troubleshooting local pg:
+- If you see a startup error like “Postgres adapter requires SUPABASE_DB_URL or DATABASE_URL”, ensure `.env` has a valid connection string and `DB_DRIVER=pg`.
+- Supabase pooled connections require SSL; leave `PGSSLMODE=require` (the default in our adapter).
 
 ## 🤝 Contributing
 

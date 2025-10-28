@@ -1,3 +1,5 @@
+// Load environment variables from .env in local/dev (no-op in managed envs)
+try { require('dotenv').config(); } catch (e) { /* ignore */ }
 // ...existing code...
 /*
   Minimal SQLite API using sql.js (pure WASM, no native build). 
@@ -112,22 +114,35 @@ const generateRequestId = () => {
   return Math.random().toString(36).substr(2, 9) + Date.now().toString(36);
 };
 
-// Detect serverless/platform environments (Vercel, Firebase Functions, Cloud Run, AWS Lambda)
-const IS_SERVERLESS = !!(
-  process.env.VERCEL ||
-  process.env.NOW_REGION ||
-  process.env.AWS_LAMBDA_FUNCTION_NAME ||
-  process.env.FUNCTION_TARGET || // Firebase Functions (Gen1)
-  process.env.FIREBASE_CONFIG ||  // Firebase Functions (Gen2)
-  process.env.K_SERVICE           // Cloud Run
-);
+const IS_SERVERLESS = !!(process.env.VERCEL || process.env.NOW_REGION || process.env.AWS_LAMBDA_FUNCTION_NAME);
 const DATA_DIR = IS_SERVERLESS ? (process.env.DATA_DIR || '/tmp') : path.join(__dirname, 'data');
-// In serverless, prefer in-memory DB (omit dbPath) or explicitly use /tmp if persistence is desired
-const DB_PATH = IS_SERVERLESS ? (process.env.DB_PATH || '') : path.join(DATA_DIR, 'sunbeth.db');
+// In serverless, default to ephemeral file storage under /tmp for better reuse across warm invocations
+// Set DB_PATH="" to force pure in-memory, or set DB_DRIVER to another provider to change persistence mode
+const DB_PATH = IS_SERVERLESS ? (process.env.DB_PATH ?? path.join(DATA_DIR, 'sunbeth.db')) : path.join(DATA_DIR, 'sunbeth.db');
 
 const PORT = process.env.PORT || 4000;
 
 async function start() {
+  // If running with Postgres (Supabase), delegate to a lean PG server to avoid
+  // sync/async impedance with the legacy SQLite code paths.
+  try {
+    const hasPgUrl = (
+      process.env.SUPABASE_DB_URL ||
+      process.env.DATABASE_URL ||
+      process.env.PG_CONNECTION_STRING ||
+      process.env.sunbeth_POSTGRES_URL ||
+      process.env.sunbeth_POSTGRES_PRISMA_URL ||
+      process.env.sunbeth_POSTGRES_URL_NON_POOLING
+    );
+    const drv = (process.env.DB_DRIVER || (hasPgUrl ? 'pg' : 'sqlite')).toLowerCase();
+    if (drv === 'pg' || drv === 'postgres' || drv === 'supabase') {
+      const { createPgApp } = require('./src/server-pg');
+      const pgApp = await createPgApp();
+      return pgApp;
+    }
+  } catch (e) {
+    // If PG init fails early, fall through to legacy code (useful for local dev)
+  }
   // ...existing code...
 
   // --- External User Auth: Password Hashing ---
@@ -202,14 +217,40 @@ async function start() {
 
   // Placeholder for moved external user routes (now relocated after app init)
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+  // If running on Vercel, optionally seed /tmp DB from packaged data/sunbeth.db on first cold start
+  try {
+    if (IS_SERVERLESS && DB_PATH) {
+      const SEED_DB_PATH = path.join(__dirname, 'data', 'sunbeth.db');
+      if (!fs.existsSync(DB_PATH) && fs.existsSync(SEED_DB_PATH)) {
+        fs.copyFileSync(SEED_DB_PATH, DB_PATH);
+      }
+    }
+  } catch (e) {
+    try { console.warn('DB seed copy failed (non-fatal):', e?.message || e); } catch {}
+  }
   // Initialize database adapter (driver-agnostic). Default: sqlite (sql.js)
   const { createDbAdapter } = require('./src/db/adapter');
+  // Auto-detect driver when not explicitly set: prefer pg if a Postgres URL exists,
+  // else libsql if a Turso URL exists, else fallback to sqlite.
+  const hasPgUrl = (
+    process.env.SUPABASE_DB_URL ||
+    process.env.DATABASE_URL ||
+    process.env.PG_CONNECTION_STRING ||
+    process.env.sunbeth_POSTGRES_URL ||
+    process.env.sunbeth_POSTGRES_PRISMA_URL ||
+    process.env.sunbeth_POSTGRES_URL_NON_POOLING
+  );
+  const hasLibsqlUrl = (process.env.LIBSQL_URL || process.env.TURSO_DATABASE_URL);
+  const DB_DRIVER = (process.env.DB_DRIVER || (hasPgUrl ? 'pg' : (hasLibsqlUrl ? 'libsql' : 'sqlite'))).toLowerCase();
+  const useBootstrap = !['pg','postgres','supabase','libsql','turso'].includes(DB_DRIVER) || DB_DRIVER === 'sqlite';
   const { adapter: db } = await createDbAdapter({
-    driver: process.env.DB_DRIVER || 'sqlite',
+    driver: DB_DRIVER,
     dataDir: DATA_DIR,
     dbPath: DB_PATH,
-    bootstrapSchema,
-    migrateSchema
+    // Only bootstrap/migrate when using embedded SQLite; external DBs should be
+    // provisioned via migrations (e.g., Supabase SQL, Turso migrations)
+    bootstrapSchema: useBootstrap ? bootstrapSchema : undefined,
+    migrateSchema: useBootstrap ? migrateSchema : undefined
   });
 
 
@@ -3713,22 +3754,35 @@ async function start() {
     }
   });
 
-  // In traditional server mode, bind to a port. In serverless, export the app as the handler.
-  if (!IS_SERVERLESS) {
-    app.listen(PORT, () => {
-      console.log(`SQLite API listening on http://localhost:${PORT}`);
-    });
+  // Return the configured Express app; the caller decides how to serve it.
+  return app;
+}
+
+// Lazy, singleton initializer for the Express app (works in serverless and traditional modes)
+let __appPromise = null;
+async function getApp() {
+  if (!__appPromise) {
+    __appPromise = start();
   }
-  // Export app for serverless platforms (Vercel, AWS Lambda via adapter, etc.)
-  module.exports = app;
-  // Optional: Export a Firebase Functions-compatible handler when available
-  try {
-    const { onRequest } = require('firebase-functions/v2/https');
-    // Named export for Firebase Functions deployment
-    exports.api = onRequest({ region: process.env.FUNCTION_REGION || 'us-central1' }, app);
-  } catch (_e) {
-    // firebase-functions not installed in this environment; ignore
-  }
+  return __appPromise;
+}
+
+// Export async getter for serverless handlers to await
+module.exports = getApp;
+
+// If running this file directly (not in serverless), start the HTTP server
+if (!IS_SERVERLESS && require.main === module) {
+  (async () => {
+    try {
+      const app = await getApp();
+      app.listen(PORT, () => {
+        console.log(`SQLite API listening on http://localhost:${PORT}`);
+      });
+    } catch (err) {
+      console.error('Failed to start server:', err);
+      process.exit(1);
+    }
+  })();
 }
 
 function mapBatch(r) {
