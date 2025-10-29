@@ -6,7 +6,6 @@
     }
   },
   "routes": [
-    { "src": "/api/health", "dest": "/api/health.js" },
     { "src": "/api/(.*)", "dest": "/api/index.js" }
   ]
 }

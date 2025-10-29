@@ -1,5 +1,3 @@
-// Load environment variables from .env in local/dev (no-op in managed envs)
-try { require('dotenv').config(); } catch (e) { /* ignore */ }
 // ...existing code...
 /*
   Minimal SQLite API using sql.js (pure WASM, no native build). 
@@ -123,26 +121,6 @@ const DB_PATH = IS_SERVERLESS ? (process.env.DB_PATH ?? path.join(DATA_DIR, 'sun
 const PORT = process.env.PORT || 4000;
 
 async function start() {
-  // If running with Postgres (Supabase), delegate to a lean PG server to avoid
-  // sync/async impedance with the legacy SQLite code paths.
-  try {
-    const hasPgUrl = (
-      process.env.SUPABASE_DB_URL ||
-      process.env.DATABASE_URL ||
-      process.env.PG_CONNECTION_STRING ||
-      process.env.sunbeth_POSTGRES_URL ||
-      process.env.sunbeth_POSTGRES_PRISMA_URL ||
-      process.env.sunbeth_POSTGRES_URL_NON_POOLING
-    );
-    const drv = (process.env.DB_DRIVER || (hasPgUrl ? 'pg' : 'sqlite')).toLowerCase();
-    if (drv === 'pg' || drv === 'postgres' || drv === 'supabase') {
-      const { createPgApp } = require('./src/server-pg');
-      const pgApp = await createPgApp();
-      return pgApp;
-    }
-  } catch (e) {
-    // If PG init fails early, fall through to legacy code (useful for local dev)
-  }
   // ...existing code...
 
   // --- External User Auth: Password Hashing ---
@@ -230,27 +208,12 @@ async function start() {
   }
   // Initialize database adapter (driver-agnostic). Default: sqlite (sql.js)
   const { createDbAdapter } = require('./src/db/adapter');
-  // Auto-detect driver when not explicitly set: prefer pg if a Postgres URL exists,
-  // else libsql if a Turso URL exists, else fallback to sqlite.
-  const hasPgUrl = (
-    process.env.SUPABASE_DB_URL ||
-    process.env.DATABASE_URL ||
-    process.env.PG_CONNECTION_STRING ||
-    process.env.sunbeth_POSTGRES_URL ||
-    process.env.sunbeth_POSTGRES_PRISMA_URL ||
-    process.env.sunbeth_POSTGRES_URL_NON_POOLING
-  );
-  const hasLibsqlUrl = (process.env.LIBSQL_URL || process.env.TURSO_DATABASE_URL);
-  const DB_DRIVER = (process.env.DB_DRIVER || (hasPgUrl ? 'pg' : (hasLibsqlUrl ? 'libsql' : 'sqlite'))).toLowerCase();
-  const useBootstrap = !['pg','postgres','supabase','libsql','turso'].includes(DB_DRIVER) || DB_DRIVER === 'sqlite';
   const { adapter: db } = await createDbAdapter({
-    driver: DB_DRIVER,
+    driver: process.env.DB_DRIVER || 'sqlite',
     dataDir: DATA_DIR,
     dbPath: DB_PATH,
-    // Only bootstrap/migrate when using embedded SQLite; external DBs should be
-    // provisioned via migrations (e.g., Supabase SQL, Turso migrations)
-    bootstrapSchema: useBootstrap ? bootstrapSchema : undefined,
-    migrateSchema: useBootstrap ? migrateSchema : undefined
+    bootstrapSchema,
+    migrateSchema
   });
 
 
