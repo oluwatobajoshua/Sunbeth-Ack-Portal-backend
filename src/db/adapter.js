@@ -1,15 +1,18 @@
 // Simple database adapter factory to make the API driver-agnostic.
-// Currently implements 'sqlite' on top of sql.js (WASM). Other drivers can be
+// Currently implements 'sqlite' on top of sql.js (WASM), 'firebase' on Firestore,
+// and 'libsql'/'turso' for remote SQLite. Other drivers can be
 // added behind the same run/query/persist interface without changing routes.
 
 const fs = require('fs');
 const path = require('path');
 const initSqlJs = require('sql.js');
+const { FirebaseAdapter } = require('./firebase');
+const { FirebaseRtdbAdapter } = require('./firebase_rtdb');
 
 /**
  * Create a DB adapter based on environment or passed driver.
  * @param {Object} opts
- * @param {string} opts.driver - e.g. 'sqlite' (default), 'postgres', 'mysql', 'mssql'.
+ * @param {string} opts.driver - e.g. 'sqlite' (default), 'firebase', 'libsql', 'turso', 'postgres', 'mysql', 'mssql'.
  * @param {string} opts.dataDir - folder path for DB files (sqlite).
  * @param {string} opts.dbPath - full path to sqlite db file.
  * @param {(db:any)=>void} opts.bootstrapSchema - callback to create schema in a fresh DB.
@@ -17,7 +20,16 @@ const initSqlJs = require('sql.js');
  * @returns {Promise<{ adapter: { driver:string, run:Function, query:Function, persist?:Function } }>}
  */
 async function createDbAdapter({ driver = process.env.DB_DRIVER || 'sqlite', dataDir, dbPath, bootstrapSchema, migrateSchema }) {
-  const normalized = String(driver || 'sqlite').toLowerCase();
+  let normalized = String(driver || 'sqlite').toLowerCase().trim();
+  // Map common aliases and sanitize unexpected values
+  if (normalized === 'supabase') normalized = 'libsql';
+  if (normalized === 'sqlite3' || normalized === 'sqljs' || normalized === 'wasm') normalized = 'sqlite';
+  const known = new Set(['sqlite','firebase','firebase-rtdb','rtdb','libsql','turso']);
+  if (!known.has(normalized)) {
+    // Default to sqlite if an unknown driver is provided
+    try { console.warn(`Unknown DB_DRIVER: ${driver}; defaulting to sqlite`); } catch {}
+    normalized = 'sqlite';
+  }
 
   // Remote libSQL/Turso adapter for durable persistence on Vercel
   if (['libsql', 'turso'].includes(normalized)) {
@@ -49,6 +61,64 @@ async function createDbAdapter({ driver = process.env.DB_DRIVER || 'sqlite', dat
       // No-op for remote DB
       persist() {}
     };
+    return { adapter };
+  }
+
+  // Firebase Firestore adapter for cloud-native deployments
+  if (normalized === 'firebase') {
+    const firebaseAdapter = new FirebaseAdapter();
+    
+    const adapter = {
+      driver: 'firebase',
+      async run(sql, params = []) {
+        try {
+          return await firebaseAdapter.run(sql, params);
+        } catch (err) {
+          console.error('Firebase run error:', err);
+          throw err;
+        }
+      },
+      async query(sql, params = []) {
+        try {
+          return await firebaseAdapter.query(sql, params);
+        } catch (err) {
+          console.error('Firebase query error:', err);
+          return [];
+        }
+      },
+      persist() {
+        // No-op for Firebase as it's automatically persistent
+        return firebaseAdapter.persist();
+      },
+      // Expose raw Firebase adapter for advanced use cases
+      raw: firebaseAdapter
+    };
+    
+    // Initialize schema if needed (Firebase doesn't need explicit schema creation)
+    if (typeof bootstrapSchema === 'function') {
+      console.log('Firebase: Schema bootstrap not needed (NoSQL database)');
+    }
+    if (typeof migrateSchema === 'function') {
+      console.log('Firebase: Schema migration not needed (NoSQL database)');
+    }
+    
+    return { adapter };
+  }
+
+  // Firebase Realtime Database adapter
+  if (normalized === 'firebase-rtdb' || normalized === 'rtdb') {
+    const rtdb = new FirebaseRtdbAdapter();
+    const adapter = {
+      driver: 'rtdb',
+      async run(sql, params = []) { return await rtdb.run(sql, params); },
+      async query(sql, params = []) {
+        try { return await rtdb.query(sql, params); } catch (e) { console.error('RTDB query error:', e); return []; }
+      },
+      persist() { return rtdb.persist(); },
+      raw: rtdb
+    };
+    // No schema bootstrap/migration for RTDB
+    console.log('Firebase RTDB: Schema bootstrap/migration not required');
     return { adapter };
   }
 

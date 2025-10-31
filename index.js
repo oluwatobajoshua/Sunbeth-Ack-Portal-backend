@@ -4,6 +4,8 @@
   - DB file: ./data/sunbeth.db (created if missing)
   - Endpoints cover app features: batches, documents, recipients, acks, progress, businesses.
 */
+// Load environment variables early
+try { require('dotenv').config(); } catch { /* ignore if dotenv not available */ }
 const path = require('path');
 const fs = require('fs');
 const express = require('express');
@@ -228,13 +230,34 @@ async function start() {
   const allQuiet = (sql, params = []) => {
     try { return db.query(sql, params) || []; } catch { return []; }
   };
-  const one = (sql, params = []) => all(sql, params)[0] || null;
+  const one = (sql, params = []) => {
+    const res = all(sql, params);
+    if (res && typeof res.then === 'function') {
+      return res.then(rows => (Array.isArray(rows) && rows.length > 0) ? rows[0] : null);
+    }
+    return (Array.isArray(res) && res.length > 0) ? res[0] : null;
+  };
 
   // Settings helpers (simple key/value via app_settings) - defined early for use in downstream middleware/routes
   const getSetting = (k, fallback = null) => {
     try { const r = one('SELECT value FROM app_settings WHERE key=?', [String(k)]); return r ? r.value : fallback; } catch { return fallback; }
   };
   const setSetting = (k, v) => { try { db.run('INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value', [String(k), String(v)]); persist(db); return true; } catch { return false; } };
+  const setSettingAsync = async (k, v) => {
+    try {
+      const isFirebase = (db && (db.driver === 'firebase' || db.driver === 'rtdb'));
+      if (isFirebase) {
+        try { await db.run('DELETE FROM app_settings WHERE key=?', [String(k)]); } catch {}
+        await db.run('INSERT INTO app_settings (key, value) VALUES (?, ?)', [String(k), String(v)]);
+        persist(db);
+        return true;
+      } else {
+        db.run('INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value', [String(k), String(v)]);
+        persist(db);
+        return true;
+      }
+    } catch (e) { return false; }
+  };
   const parseJson = (s, d=null) => { try { return s ? JSON.parse(String(s)) : (d==null?{}:d); } catch { return (d==null?{}:d); } };
   const getTenantSettings = (tenantId) => {
     try {
@@ -1300,14 +1323,7 @@ async function start() {
       // Compute sha256 for dedupe/trace
       const sha256 = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
 
-      // Dedupe by sha256
-      try {
-        const exist = one('SELECT id, rel_path, mime, original_name FROM uploaded_files WHERE sha256=? LIMIT 1', [sha256]);
-        if (exist) {
-          const apiUrl = `/api/files/${exist.id}`;
-          return res.json({ id: exist.id, name: exist.original_name, size: req.file.size, mime: exist.mime, sha256, url: apiUrl, deduped: true });
-        }
-      } catch {}
+      // (Deduplication disabled for reliability; always insert a new record)
 
       // Prepare storage path
       const uploadsDir = path.join(DATA_DIR, 'uploads');
@@ -1329,11 +1345,11 @@ async function start() {
       const relPath = path.relative(DATA_DIR, fullPath).replace(/\\/g, '/');
       const urlPath = `/api/files/by-path/${encodeURIComponent(relPath)}`; // internal convenience
       // Insert into uploaded_files table
-      try { db.run('INSERT INTO uploaded_files (original_name, stored_name, rel_path, size, mime, sha256, uploaded_at, uploaded_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', [origName, storedName, relPath, req.file.size, guessed, sha256, now, uploadedBy]); }
+      try { await db.run('INSERT INTO uploaded_files (original_name, stored_name, rel_path, size, mime, sha256, uploaded_at, uploaded_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', [origName, storedName, relPath, req.file.size, guessed, sha256, now, uploadedBy]); }
       catch (e) {
         // Ensure table exists (older DBs)
         try {
-          db.run(`CREATE TABLE IF NOT EXISTS uploaded_files (
+          await db.run(`CREATE TABLE IF NOT EXISTS uploaded_files (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             original_name TEXT,
             stored_name TEXT,
@@ -1344,15 +1360,26 @@ async function start() {
             uploaded_at TEXT,
             uploaded_by TEXT
           );`);
-          db.run('INSERT INTO uploaded_files (original_name, stored_name, rel_path, size, mime, sha256, uploaded_at, uploaded_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', [origName, storedName, relPath, req.file.size, guessed, sha256, now, uploadedBy]);
+          await db.run('INSERT INTO uploaded_files (original_name, stored_name, rel_path, size, mime, sha256, uploaded_at, uploaded_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', [origName, storedName, relPath, req.file.size, guessed, sha256, now, uploadedBy]);
         } catch (ee) {
           return res.status(500).json({ error: 'db_error', details: ee?.message || String(ee) });
         }
       }
-      const id = one('SELECT last_insert_rowid() as id')?.id;
+      let id = null;
+      try {
+        // SQLite/async-safe path
+        const row = await one('SELECT last_insert_rowid() as id');
+        id = row?.id ?? null;
+      } catch (e) { /* noop */ }
+      if (id == null) {
+        // Firebase/RTDB path: find by sha256 (async-safe)
+        try {
+          const probe = await one('SELECT id FROM uploaded_files WHERE sha256=? LIMIT 1', [sha256]);
+          if (probe && probe.id != null) id = probe.id;
+        } catch (e) { /* noop */ }
+      }
       persist(db);
-      // Return a stable API URL for this file
-      const apiUrl = `/api/files/${id}`;
+      const apiUrl = id != null ? `/api/files/${id}` : null;
       return res.json({ id, name: origName, size: req.file.size, mime: guessed, sha256, url: apiUrl });
     } catch (e) {
       res.status(500).json({ error: 'upload_failed', details: e?.message || String(e) });
@@ -1464,26 +1491,38 @@ async function start() {
   });
 
   // List server library files (most recent first)
-  app.get('/api/library/list', (req, res) => {
+  app.get('/api/library/list', async (req, res) => {
     try {
       const q = String(req.query.q || '').trim().toLowerCase();
       const limit = Math.max(1, Math.min(200, Number(req.query.limit || 100)));
-      let rows = all('SELECT id, original_name, size, mime, uploaded_at, sha256 FROM uploaded_files ORDER BY id DESC LIMIT ?', [limit]);
+      let rows;
+      // Firestore/RTDB adapters don't parse "LIMIT ?"; fetch then slice client-side
+      if (db && (db.driver === 'firebase' || db.driver === 'rtdb')) {
+        rows = await all('SELECT id, original_name, size, mime, uploaded_at, sha256 FROM uploaded_files ORDER BY id DESC');
+      } else {
+        rows = all('SELECT id, original_name, size, mime, uploaded_at, sha256 FROM uploaded_files ORDER BY id DESC LIMIT ?', [limit]);
+      }
       if (q) {
         rows = rows.filter(r => String(r.original_name || '').toLowerCase().includes(q) || String(r.mime || '').toLowerCase().includes(q));
       }
+      if (db && (db.driver === 'firebase' || db.driver === 'rtdb')) {
+        rows = rows.slice(0, limit);
+      }
       res.json({ files: rows.map(r => ({ id: r.id, name: r.original_name, size: r.size, mime: r.mime, uploadedAt: r.uploaded_at, sha256: r.sha256, url: `/api/files/${r.id}` })) });
     } catch (e) {
-      res.status(500).json({ error: 'list_failed' });
+      res.status(500).json({ error: 'list_failed', details: e?.message || String(e) });
     }
   });
 
   // GET /api/files/:id -> stream file inline (or as attachment if download=1); supports diag=1
-  app.get('/api/files/:id', (req, res) => {
+  app.get('/api/files/:id', async (req, res) => {
     try {
-      const id = Number(req.params.id);
-      if (!Number.isInteger(id)) return res.status(400).json({ error: 'invalid_id' });
-      const row = one('SELECT id, original_name, stored_name, rel_path, size, mime, sha256, uploaded_at FROM uploaded_files WHERE id=?', [id]);
+      const isFirebase = (db && (db.driver === 'firebase' || db.driver === 'rtdb'));
+      const id = isFirebase ? String(req.params.id) : Number(req.params.id);
+      if (!isFirebase && !Number.isInteger(id)) return res.status(400).json({ error: 'invalid_id' });
+      const row = isFirebase
+        ? await one('SELECT id, original_name, stored_name, rel_path, size, mime, sha256, uploaded_at FROM uploaded_files WHERE id=?', [id])
+        : one('SELECT id, original_name, stored_name, rel_path, size, mime, sha256, uploaded_at FROM uploaded_files WHERE id=?', [id]);
       if (!row) return res.status(404).json({ error: 'not_found' });
       const isDiag = String(req.query.diag || '').toLowerCase() === '1' || String(req.query.diag || '').toLowerCase() === 'true';
       const dl = String(req.query.download || '') === '1';
@@ -1734,13 +1773,83 @@ async function start() {
   });
 
   // Notification Emails API
-  app.get('/api/notification-emails', (req, res) => {
+  app.get('/api/notification-emails', async (req, res) => {
     try {
-      const rows = all('SELECT email FROM notification_emails ORDER BY email ASC');
-      res.json({ emails: rows.map(r => r.email) });
+      const maybe = all('SELECT email FROM notification_emails ORDER BY email ASC');
+      const rows = (maybe && typeof maybe.then === 'function') ? await maybe : (maybe || []);
+      res.json({ emails: (Array.isArray(rows) ? rows : []).map(r => r.email) });
     } catch (e) {
       res.status(500).json({ error: 'Failed to load notification emails', details: e?.message || e });
     }
+  });
+
+  // --- Settings: External Support (simple on/off) ---
+  // GET /api/settings/external-support -> { enabled: boolean }
+  app.get('/api/settings/external-support', (req, res) => {
+    try {
+      const v = String(getSetting('external_support_enabled', process.env.EXTERNAL_SUPPORT_ENABLED || '0') || '0');
+      res.json({ enabled: (v === '1' || v.toLowerCase() === 'true') });
+    } catch (e) {
+      res.status(500).json({ error: 'load_failed' });
+    }
+  });
+  // PUT /api/settings/external-support { enabled: boolean }
+  app.put('/api/settings/external-support', (req, res) => {
+    try {
+      const enabled = !!(req.body && (req.body.enabled === true || String(req.body.enabled) === '1'));
+      const ok = setSetting('external_support_enabled', enabled ? '1' : '0');
+      if (!ok) return res.status(500).json({ error: 'save_failed' });
+      res.json({ enabled });
+    } catch (e) { res.status(500).json({ error: 'save_failed' }); }
+  });
+
+  // --- Settings: Legal Consent Document ---
+  // Persist just the file id (points to uploaded_files), derive url/name on read
+  // GET /api/settings/legal-consent -> { fileId, url, name }
+  app.get('/api/settings/legal-consent', async (req, res) => {
+    try {
+      const isFirebase = (db && (db.driver === 'firebase' || db.driver === 'rtdb'));
+      let stored = '';
+      if (isFirebase) {
+        const r = await one('SELECT value FROM app_settings WHERE key=? ORDER BY updatedAt DESC LIMIT 1', ['legal_consent_file_id']);
+        stored = String(r?.value || '').trim();
+      } else {
+        stored = String(getSetting('legal_consent_file_id', '') || '').trim();
+      }
+      if (!stored) return res.json({ fileId: null, url: null, name: null });
+      const id = isFirebase ? stored : Number(stored);
+      const row = isFirebase
+        ? await one('SELECT id, original_name FROM uploaded_files WHERE id=?', [id])
+        : one('SELECT id, original_name FROM uploaded_files WHERE id=?', [id]);
+      if (!row) return res.json({ fileId: null, url: null, name: null });
+      return res.json({ fileId: row.id, url: `/api/files/${row.id}`, name: row.original_name || 'document.pdf' });
+    } catch (e) { res.status(500).json({ error: 'load_failed' }); }
+  });
+  // PUT /api/settings/legal-consent { fileId: number|null }
+  app.put('/api/settings/legal-consent', async (req, res) => {
+    try {
+      const raw = (req.body && (req.body.fileId !== undefined)) ? req.body.fileId : null;
+      if (raw == null || raw === '') {
+        const isFirebase = (db && (db.driver === 'firebase' || db.driver === 'rtdb'));
+        if (isFirebase) {
+          try { await db.run('DELETE FROM app_settings WHERE key=?', ['legal_consent_file_id']); } catch {}
+        } else {
+          const ok0 = setSetting('legal_consent_file_id', '');
+          if (!ok0) return res.status(500).json({ error: 'save_failed' });
+        }
+        return res.json({ fileId: null, url: null, name: null });
+      }
+      const isFirebase = (db && (db.driver === 'firebase' || db.driver === 'rtdb'));
+      const id = isFirebase ? String(raw) : Number(raw);
+      if (!isFirebase && !Number.isFinite(id)) return res.status(400).json({ error: 'invalid_file_id' });
+      const row = isFirebase
+        ? await one('SELECT id, original_name FROM uploaded_files WHERE id=?', [id])
+        : one('SELECT id, original_name FROM uploaded_files WHERE id=?', [id]);
+      if (!row) return res.status(404).json({ error: 'file_not_found' });
+  const ok = await setSettingAsync('legal_consent_file_id', String(row.id));
+  if (!ok) return res.status(500).json({ error: 'save_failed' });
+      res.json({ fileId: row.id, url: `/api/files/${row.id}`, name: row.original_name || 'document.pdf' });
+    } catch (e) { res.status(500).json({ error: 'save_failed' }); }
   });
 
   // Customization Requests
@@ -1794,12 +1903,14 @@ async function start() {
   });
 
 
-  // Ensure at least one business exists (after helpers available)
+  // Optional: seed a default business only when explicitly enabled
   try {
-    const cnt = one('SELECT COUNT(*) as c FROM businesses')?.c || 0;
-    if (cnt === 0) {
-      db.run("INSERT INTO businesses (name, code, isActive, description) VALUES ('Default Business', 'DEF', 1, 'Auto-created')");
-      persist(db);
+    if (String(process.env.AUTO_SEED_DEFAULT_BUSINESS || '').trim() === '1') {
+      const cnt = one('SELECT COUNT(*) as c FROM businesses')?.c || 0;
+      if (cnt === 0) {
+        db.run('INSERT INTO businesses (name, code, isActive, description) VALUES (?, ?, ?, ?)', ['Default Business', 'DEF', 1, 'Auto-created']);
+        persist(db);
+      }
     }
   } catch (e) { console.warn('Business seed check failed (non-fatal):', e); }
 
@@ -1817,12 +1928,17 @@ async function start() {
     res.json(PERMISSIONS);
   });
   // RBAC: role permissions (get)
-  app.get('/api/rbac/role-permissions', (req, res) => {
-    const role = (req.query.role || '').toString();
-    const rows = role
-      ? all('SELECT role, permKey, value FROM role_permissions WHERE role=?', [role])
-      : all('SELECT role, permKey, value FROM role_permissions');
-    res.json(rows.map(r => ({ role: r.role, permKey: r.permKey, value: !!r.value })));
+  app.get('/api/rbac/role-permissions', async (req, res) => {
+    try {
+      const role = (req.query.role || '').toString();
+      const maybe = role
+        ? all('SELECT role, permKey, value FROM role_permissions WHERE role=?', [role])
+        : all('SELECT role, permKey, value FROM role_permissions');
+      const rows = (maybe && typeof maybe.then === 'function') ? await maybe : (maybe || []);
+      res.json((Array.isArray(rows) ? rows : []).map(r => ({ role: r.role, permKey: r.permKey, value: !!r.value })));
+    } catch (e) {
+      res.status(500).json({ error: 'list_failed', details: e?.message || String(e) });
+    }
   });
   // RBAC: role permissions (set mapping for a role)
   app.put('/api/rbac/role-permissions', (req, res) => {
@@ -1910,6 +2026,24 @@ async function start() {
       res.json({ roles, permissions: effective });
     } catch (e) { console.error('effective perms failed', e); res.status(500).json({ error: 'failed' }); }
   });
+  // Diagnostics: expose current DB driver (sqlite, firebase, libsql, etc.)
+  app.get('/api/diag/db', async (_req, res) => {
+    try {
+      const driver = (db && db.driver) ? String(db.driver) : 'unknown';
+      // simple canary query to ensure adapter responds (non-fatal if it fails)
+      let canary = null;
+      try {
+        if (db && typeof db.query === 'function') {
+          const maybe = db.query('SELECT 1 as ok');
+          const rs = (maybe && typeof maybe.then === 'function') ? await maybe : maybe;
+          if (Array.isArray(rs) && rs.length > 0) canary = rs[0];
+        }
+      } catch {}
+      res.json({ driver, canary });
+    } catch {
+      res.json({ driver: 'unknown' });
+    }
+  });
   // Health
   app.get('/api/health', (_req, res) => res.json({ ok: true }));
   // Root helper
@@ -1922,7 +2056,7 @@ async function start() {
   });
 
   // Stats for dashboards/overview (supports filters via query: businessId, department, primaryGroup)
-  app.get('/api/stats', (req, res) => {
+  app.get('/api/stats', async (req, res) => {
     const filters = [];
     const params = [];
     const hasFilters = () => filters.length > 0;
@@ -1930,125 +2064,299 @@ async function start() {
     if (req.query.department) { filters.push('LOWER(r.department) = ?'); params.push(String(req.query.department).toLowerCase()); }
     if (req.query.primaryGroup) { filters.push('LOWER(r.primaryGroup) = ?'); params.push(String(req.query.primaryGroup).toLowerCase()); }
     const where = hasFilters() ? `WHERE ${filters.join(' AND ')}` : '';
+    const isFirebase = (db && (db.driver === 'firebase' || db.driver === 'rtdb'));
 
+    if (isFirebase) {
+      // Fetch tables and compute in JS
+      const [recRowsMaybe, ackRowsMaybe, batchRowsMaybe, docsRowsMaybe] = [
+        all('SELECT id, batchId, businessId, email, department, primaryGroup FROM recipients'),
+        all('SELECT batchId, email, acknowledged, documentId FROM acks'),
+        all('SELECT id, status FROM batches'),
+        all('SELECT id, batchId FROM documents')
+      ];
+      const recRows = (recRowsMaybe && typeof recRowsMaybe.then === 'function') ? await recRowsMaybe : (recRowsMaybe || []);
+      const ackRows = (ackRowsMaybe && typeof ackRowsMaybe.then === 'function') ? await ackRowsMaybe : (ackRowsMaybe || []);
+      const batchRows = (batchRowsMaybe && typeof batchRowsMaybe.then === 'function') ? await batchRowsMaybe : (batchRowsMaybe || []);
+      const docRows = (docsRowsMaybe && typeof docsRowsMaybe.then === 'function') ? await docsRowsMaybe : (docsRowsMaybe || []);
+
+      const matchFilters = (r) => {
+        if (req.query.businessId && String(r.businessId) !== String(req.query.businessId)) return false;
+        if (req.query.department && String(r.department || '').toLowerCase() !== String(req.query.department).toLowerCase()) return false;
+        if (req.query.primaryGroup && String(r.primaryGroup || '').toLowerCase() !== String(req.query.primaryGroup).toLowerCase()) return false;
+        return true;
+      };
+      const recipients = recRows.filter(matchFilters);
+      const totalRecipients = recipients.length;
+      // Assignment-based completion: denominator = total assignments (recipients x docs per batch), numerator = acknowledged acks matching those assignments
+      const docsPerBatch = new Map();
+      for (const d of docRows) {
+        const k = String(d.batchId);
+        docsPerBatch.set(k, (docsPerBatch.get(k) || 0) + 1);
+      }
+      const recsPerBatch = new Map();
+      for (const r of recipients) {
+        const k = String(r.batchId);
+        recsPerBatch.set(k, (recsPerBatch.get(k) || 0) + 1);
+      }
+      let totalAssignments = 0;
+      for (const [batchId, rc] of recsPerBatch.entries()) {
+        const dc = Number(docsPerBatch.get(String(batchId)) || 0);
+        totalAssignments += rc * dc;
+      }
+      const ackTrueAssignments = ackRows
+        .filter(a => a.acknowledged)
+        .filter(a => recipients.some(r => String(r.batchId) === String(a.batchId) && String(r.email || '').toLowerCase() === String(a.email || '').toLowerCase()))
+        .length;
+      const completionRate = totalAssignments > 0 ? Math.round((ackTrueAssignments / totalAssignments) * 1000) / 10 : 0;
+      const totalBatches = new Set(recipients.map(r => String(r.batchId))).size;
+      const activeBatchIds = new Set(batchRows.filter(b => Number(b.status) === 1).map(b => String(b.id)));
+      const activeBatches = new Set(recipients.map(r => String(r.batchId)).filter(id => activeBatchIds.has(id))).size;
+      return res.json({ totalBatches, activeBatches, totalUsers: totalRecipients, totalAssignments, completionRate, overdueBatches: 0, avgCompletionTime: 0 });
+    }
+
+    // Default (SQL) path
     let totalRecipients = 0;
+    const maybeTR0 = hasFilters() ? one(`SELECT COUNT(*) as c FROM recipients r ${where}`, params) : one('SELECT COUNT(*) as c FROM recipients');
+    const tr0 = (maybeTR0 && typeof maybeTR0.then === 'function') ? await maybeTR0 : maybeTR0;
+    totalRecipients = tr0?.c || 0;
+
+    // Assignment-based totals (recipients x docs per batch)
+    let totalAssignments = 0;
     if (hasFilters()) {
-      totalRecipients = one(`SELECT COUNT(*) as c FROM recipients r ${where}`, params)?.c || 0;
+      const maybeTA = one(
+        `SELECT COUNT(*) as c
+         FROM recipients r
+         JOIN documents d ON d.batchId = r.batchId
+         ${where}`,
+        params
+      );
+      const ta = (maybeTA && typeof maybeTA.then === 'function') ? await maybeTA : maybeTA;
+      totalAssignments = ta?.c || 0;
     } else {
-      totalRecipients = one('SELECT COUNT(*) as c FROM recipients')?.c || 0;
+      const maybeTA2 = one('SELECT COUNT(*) as c FROM recipients r JOIN documents d ON d.batchId = r.batchId');
+      const ta2 = (maybeTA2 && typeof maybeTA2.then === 'function') ? await maybeTA2 : maybeTA2;
+      totalAssignments = ta2?.c || 0;
     }
 
-    let ackTrue = 0;
-    if (hasFilters()) {
-      ackTrue = one(
-        `SELECT COUNT(*) as c FROM acks a 
-         JOIN recipients r ON r.batchId=a.batchId AND LOWER(r.email)=LOWER(a.email)
-         ${where} AND a.acknowledged=1`, params
-      )?.c || 0;
-    } else {
-      ackTrue = one('SELECT COUNT(*) as c FROM acks WHERE acknowledged=1')?.c || 0;
-    }
+    // Completed assignments = acknowledged acks that match a recipient
+    const maybeA = hasFilters()
+      ? one(
+          `SELECT COUNT(*) as c FROM acks a 
+           JOIN recipients r ON r.batchId=a.batchId AND LOWER(r.email)=LOWER(a.email)
+           ${where} AND a.acknowledged=1`, params)
+      : one(`SELECT COUNT(*) as c FROM acks a JOIN recipients r ON r.batchId=a.batchId AND LOWER(r.email)=LOWER(a.email) WHERE a.acknowledged=1`);
+    const a = (maybeA && typeof maybeA.then === 'function') ? await maybeA : maybeA;
+    const ackTrueAssignments = a?.c || 0;
 
-    const completionRate = totalRecipients > 0 ? Math.round((ackTrue / totalRecipients) * 1000) / 10 : 0;
+    const completionRate = totalAssignments > 0 ? Math.round((ackTrueAssignments / totalAssignments) * 1000) / 10 : 0;
 
     let totalBatches = 0;
     let activeBatches = 0;
     if (hasFilters()) {
-      totalBatches = one(
-        `SELECT COUNT(DISTINCT r.batchId) as c FROM recipients r ${where}`,
-        params
-      )?.c || 0;
-      activeBatches = one(
-        `SELECT COUNT(DISTINCT r.batchId) as c FROM recipients r 
-         JOIN batches b ON b.id=r.batchId 
-         ${where} AND b.status=1`, params
-      )?.c || 0;
+      const maybeTB = one(`SELECT COUNT(DISTINCT r.batchId) as c FROM recipients r ${where}`, params);
+      const tb = (maybeTB && typeof maybeTB.then === 'function') ? await maybeTB : maybeTB;
+      totalBatches = tb?.c || 0;
+      const maybeAB = one(`SELECT COUNT(DISTINCT r.batchId) as c FROM recipients r JOIN batches b ON b.id=r.batchId ${where} AND b.status=1`, params);
+      const ab = (maybeAB && typeof maybeAB.then === 'function') ? await maybeAB : maybeAB;
+      activeBatches = ab?.c || 0;
     } else {
-      totalBatches = one('SELECT COUNT(*) as c FROM batches')?.c || 0;
-      activeBatches = one('SELECT COUNT(*) as c FROM batches WHERE status=1')?.c || totalBatches;
+      const maybeTB2 = one('SELECT COUNT(*) as c FROM batches');
+      const tb2 = (maybeTB2 && typeof maybeTB2.then === 'function') ? await maybeTB2 : maybeTB2;
+      totalBatches = tb2?.c || 0;
+      const maybeAB2 = one('SELECT COUNT(*) as c FROM batches WHERE status=1');
+      const ab2 = (maybeAB2 && typeof maybeAB2.then === 'function') ? await maybeAB2 : maybeAB2;
+      activeBatches = ab2?.c || totalBatches;
     }
 
-    res.json({ totalBatches, activeBatches, totalUsers: totalRecipients, completionRate, overdueBatches: 0, avgCompletionTime: 0 });
+    res.json({ totalBatches, activeBatches, totalUsers: totalRecipients, totalAssignments, completionRate, overdueBatches: 0, avgCompletionTime: 0 });
   });
 
   // Compliance breakdown by department (supports filters)
-  app.get('/api/compliance', (req, res) => {
+  app.get('/api/compliance', async (req, res) => {
     const filters = [];
     const params = [];
     if (req.query.businessId) { filters.push('r.businessId = ?'); params.push(Number(req.query.businessId)); }
     if (req.query.department) { filters.push('LOWER(r.department) = ?'); params.push(String(req.query.department).toLowerCase()); }
     if (req.query.primaryGroup) { filters.push('LOWER(r.primaryGroup) = ?'); params.push(String(req.query.primaryGroup).toLowerCase()); }
     const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
-    // Totals per department
-    const totals = all(`SELECT COALESCE(r.department,'Unspecified') as department, COUNT(*) as totalUsers FROM recipients r ${where} GROUP BY COALESCE(r.department,'Unspecified')`, params);
-    // Acks per department
-    const acks = all(
-      `SELECT COALESCE(r.department,'Unspecified') as department, COUNT(*) as completed
-       FROM acks a 
-       JOIN recipients r ON r.batchId=a.batchId AND LOWER(r.email)=LOWER(a.email)
-       ${where} AND a.acknowledged=1
-       GROUP BY COALESCE(r.department,'Unspecified')`, params
-    );
+    const isFirebase = (db && (db.driver === 'firebase' || db.driver === 'rtdb'));
+    if (isFirebase) {
+      const [recRowsMaybe, ackRowsMaybe, docsRowsMaybe] = [
+        all('SELECT department, businessId, email, batchId FROM recipients'),
+        all('SELECT batchId, email, acknowledged, documentId FROM acks'),
+        all('SELECT id, batchId FROM documents')
+      ];
+      const recRows = (recRowsMaybe && typeof recRowsMaybe.then === 'function') ? await recRowsMaybe : (recRowsMaybe || []);
+      const ackRows = (ackRowsMaybe && typeof ackRowsMaybe.then === 'function') ? await ackRowsMaybe : (ackRowsMaybe || []);
+      const docRows = (docsRowsMaybe && typeof docsRowsMaybe.then === 'function') ? await docsRowsMaybe : (docsRowsMaybe || []);
+      const matchFilters = (r) => {
+        if (req.query.businessId && String(r.businessId) !== String(req.query.businessId)) return false;
+        if (req.query.department && String(r.department || '').toLowerCase() !== String(req.query.department).toLowerCase()) return false;
+        if (req.query.primaryGroup && String(r.primaryGroup || '').toLowerCase() !== String(req.query.primaryGroup).toLowerCase()) return false;
+        return true;
+      };
+      const recipients = recRows.filter(matchFilters);
+      const docsPerBatch = new Map();
+      for (const d of docRows) {
+        const k = String(d.batchId);
+        docsPerBatch.set(k, (docsPerBatch.get(k) || 0) + 1);
+      }
+      // Build department -> { perBatchRecipients: Map(batchId -> count), completedAssignments }
+      const grouped = new Map();
+      for (const r of recipients) {
+        const dep = String(r.department || 'Unspecified');
+        if (!grouped.has(dep)) grouped.set(dep, { perBatchRec: new Map(), completed: 0 });
+        const k = String(r.batchId);
+        const g = grouped.get(dep);
+        g.perBatchRec.set(k, (g.perBatchRec.get(k) || 0) + 1);
+      }
+      // Completed assignments per department = acks that match a recipient in that department
+      for (const [dep, g] of grouped.entries()) {
+        const completed = ackRows
+          .filter(a => a.acknowledged)
+          .filter(a => recipients.some(r => String(r.batchId) === String(a.batchId) && String(r.email || '').toLowerCase() === String(a.email || '').toLowerCase() && String(r.department || 'Unspecified') === dep))
+          .length;
+        g.completed = completed;
+      }
+      const rows = Array.from(grouped.entries()).map(([department, g]) => {
+        let totalAssignments = 0;
+        let recipientsTotal = 0;
+        for (const [batchId, rc] of g.perBatchRec.entries()) {
+          recipientsTotal += rc;
+          const dc = Number(docsPerBatch.get(String(batchId)) || 0);
+          totalAssignments += rc * dc;
+        }
+        const completed = g.completed;
+        const pending = Math.max(0, totalAssignments - completed);
+        const completionRate = totalAssignments > 0 ? Math.round((completed / totalAssignments) * 1000) / 10 : 0;
+        return { department, totalUsers: recipientsTotal, totalAssignments, completed, pending, overdue: 0, completionRate };
+      });
+      return res.json(rows);
+    }
+
+    // Default SQL path
+    const totalsMaybe = all(`
+      SELECT COALESCE(r.department,'Unspecified') as department, COUNT(*) as totalAssignments
+      FROM recipients r
+      JOIN documents d ON d.batchId = r.batchId
+      ${where}
+      GROUP BY COALESCE(r.department,'Unspecified')
+    `, params);
+    const recipTotalsMaybe = all(`
+      SELECT COALESCE(r.department,'Unspecified') as department, COUNT(*) as recipientsTotal
+      FROM recipients r
+      ${where}
+      GROUP BY COALESCE(r.department,'Unspecified')
+    `, params);
+    const acksMaybe = all(`
+      SELECT COALESCE(r.department,'Unspecified') as department, COUNT(*) as completed
+      FROM acks a
+      JOIN recipients r ON r.batchId=a.batchId AND LOWER(r.email)=LOWER(a.email)
+      ${where} AND a.acknowledged=1
+      GROUP BY COALESCE(r.department,'Unspecified')
+    `, params);
+    const totals = (totalsMaybe && typeof totalsMaybe.then === 'function') ? await totalsMaybe : (totalsMaybe || []);
+    const recipTotals = (recipTotalsMaybe && typeof recipTotalsMaybe.then === 'function') ? await recipTotalsMaybe : (recipTotalsMaybe || []);
+    const acks = (acksMaybe && typeof acksMaybe.then === 'function') ? await acksMaybe : (acksMaybe || []);
     const ackMap = new Map(acks.map(r => [String(r.department), Number(r.completed)]));
-    const rows = totals.map(t => {
-      const totalUsers = Number(t.totalUsers) || 0;
-      const completed = Number(ackMap.get(String(t.department)) || 0);
-      const pending = Math.max(0, totalUsers - completed);
+    const recipMap = new Map(recipTotals.map(r => [String(r.department), Number(r.recipientsTotal)]));
+    let rows = totals.map(t => {
+      const dep = String(t.department);
+      const totalAssignments = Number(t.totalAssignments) || 0;
+      const recipientsTotal = Number(recipMap.get(dep) || 0);
+      const completed = Number(ackMap.get(dep) || 0);
+      const pending = Math.max(0, totalAssignments - completed);
       const overdue = 0;
-      const completionRate = totalUsers > 0 ? Math.round((completed / totalUsers) * 1000) / 10 : 0;
-      return { department: String(t.department), totalUsers, completed, pending, overdue, completionRate };
+      const completionRate = totalAssignments > 0 ? Math.round((completed / totalAssignments) * 1000) / 10 : 0;
+      return { department: dep, totalUsers: recipientsTotal, totalAssignments, completed, pending, overdue, completionRate };
     });
-    res.json(rows);
+    // Optional search and pagination
+    const qComp = String(req.query.q || '').toLowerCase().trim();
+    if (qComp) {
+      rows = rows.filter(r => String(r.department || '').toLowerCase().includes(qComp));
+    }
+    const limitComp = Math.max(1, Math.min(Number(req.query.limit || 100), 1000));
+    const offsetComp = Math.max(0, Number(req.query.offset || 0));
+    const pagedComp = rows.slice(offsetComp, offsetComp + limitComp);
+    res.json(pagedComp);
   });
 
   // Document performance stats (supports filters)
-  app.get('/api/doc-stats', (req, res) => {
+  app.get('/api/doc-stats', async (req, res) => {
     const filters = [];
     const params = [];
     if (req.query.businessId) { filters.push('r.businessId = ?'); params.push(Number(req.query.businessId)); }
     if (req.query.department) { filters.push('LOWER(r.department) = ?'); params.push(String(req.query.department).toLowerCase()); }
     if (req.query.primaryGroup) { filters.push('LOWER(r.primaryGroup) = ?'); params.push(String(req.query.primaryGroup).toLowerCase()); }
     const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
-
-    // Total assigned = recipients per batch for each document
-    const assigned = all(
-      `SELECT d.id as documentId, d.title as documentName, b.name as batchName, COUNT(r.id) as totalAssigned
-       FROM documents d
-       JOIN batches b ON b.id=d.batchId
-       JOIN recipients r ON r.batchId=d.batchId
-       ${where}
-       GROUP BY d.id, d.title, b.name
-       ORDER BY d.id DESC`, params
-    );
-    // Acknowledged per document (filtered via recipients)
-    const acked = all(
-      `SELECT d.id as documentId, COUNT(a.id) as acknowledged
-       FROM documents d
-       JOIN acks a ON a.documentId=d.id AND a.acknowledged=1
-       JOIN recipients r ON r.batchId=d.batchId AND LOWER(r.email)=LOWER(a.email)
-       ${where}
-       GROUP BY d.id`, params
-    );
-    const ackMap = new Map(acked.map(r => [Number(r.documentId), Number(r.acknowledged)]));
-    const rows = assigned.map(a => {
-      const acknowledged = Number(ackMap.get(Number(a.documentId)) || 0);
-      const totalAssigned = Number(a.totalAssigned) || 0;
-      const pending = Math.max(0, totalAssigned - acknowledged);
-      const avgTimeToComplete = 0;
-      return {
-        documentName: String(a.documentName),
-        batchName: String(a.batchName),
-        totalAssigned,
-        acknowledged,
-        pending,
-        avgTimeToComplete
+    const isFirebase = (db && (db.driver === 'firebase' || db.driver === 'rtdb'));
+    if (isFirebase) {
+      const [docsMaybe, recsMaybe, acksMaybe, batchesMaybe] = [
+        all('SELECT id, title, batchId FROM documents'),
+        all('SELECT id, batchId, businessId, email, department, primaryGroup FROM recipients'),
+        all('SELECT documentId, batchId, email, acknowledged FROM acks'),
+        all('SELECT id, name FROM batches')
+      ];
+      const docs = (docsMaybe && typeof docsMaybe.then === 'function') ? await docsMaybe : (docsMaybe || []);
+      const recs = (recsMaybe && typeof recsMaybe.then === 'function') ? await recsMaybe : (recsMaybe || []);
+      const acks = (acksMaybe && typeof acksMaybe.then === 'function') ? await acksMaybe : (acksMaybe || []);
+      const batches = (batchesMaybe && typeof batchesMaybe.then === 'function') ? await batchesMaybe : (batchesMaybe || []);
+      const matchFilters = (r) => {
+        if (req.query.businessId && String(r.businessId) !== String(req.query.businessId)) return false;
+        if (req.query.department && String(r.department || '').toLowerCase() !== String(req.query.department).toLowerCase()) return false;
+        if (req.query.primaryGroup && String(r.primaryGroup || '').toLowerCase() !== String(req.query.primaryGroup).toLowerCase()) return false;
+        return true;
       };
-    });
-    res.json(rows);
+      const recsFiltered = recs.filter(matchFilters);
+      let out = docs.map(d => {
+        const assigned = recsFiltered.filter(r => String(r.batchId) === String(d.batchId)).length;
+        const completed = acks.filter(a => a.acknowledged && String(a.documentId) === String(d.id))
+          .filter(a => recsFiltered.some(r => String(r.batchId) === String(a.batchId) && String(r.email || '').toLowerCase() === String(a.email || '').toLowerCase()))
+          .length;
+        const batchName = (batches.find(b => String(b.id) === String(d.batchId)) || {}).name;
+        return { documentId: String(d.id), documentName: d.title, batchName, totalAssigned: assigned, completed };
+      });
+      // Sort by documentId desc for parity
+      out.sort((a,b) => (a.documentId < b.documentId ? 1 : -1));
+      // Optional search and pagination
+      const qDocs = String(req.query.q || '').toLowerCase().trim();
+      if (qDocs) {
+        out = out.filter(r => String(r.documentName || '').toLowerCase().includes(qDocs) || String(r.batchName || '').toLowerCase().includes(qDocs));
+      }
+      const limitDocs = Math.max(1, Math.min(Number(req.query.limit || 100), 500));
+      const offsetDocs = Math.max(0, Number(req.query.offset || 0));
+      const pagedDocs = out.slice(offsetDocs, offsetDocs + limitDocs);
+      return res.json(pagedDocs);
+    }
+
+    // Default SQL path
+    const assignedMaybe = all(`SELECT d.id as documentId, d.title as documentName, b.name as batchName, COUNT(r.id) as totalAssigned FROM documents d JOIN batches b ON b.id=d.batchId JOIN recipients r ON r.batchId=d.batchId ${where} GROUP BY d.id, d.title, b.name ORDER BY d.id DESC`, params);
+    const ackedMaybe = all(`SELECT d.id as documentId, COUNT(a.id) as completed FROM documents d LEFT JOIN acks a ON a.documentId=d.id AND a.acknowledged=1 JOIN recipients r ON r.batchId=d.batchId AND LOWER(r.email)=LOWER(a.email) ${where} GROUP BY d.id ORDER BY d.id DESC`, params);
+    const assigned = (assignedMaybe && typeof assignedMaybe.then === 'function') ? await assignedMaybe : (assignedMaybe || []);
+    const acked = (ackedMaybe && typeof ackedMaybe.then === 'function') ? await ackedMaybe : (ackedMaybe || []);
+    const am = new Map(assigned.map(r => [String(r.documentId), Number(r.totalAssigned)]));
+    const info = new Map(assigned.map(r => [String(r.documentId), { documentName: r.documentName, batchName: r.batchName }]));
+    const cm = new Map(acked.map(r => [String(r.documentId), Number(r.completed)]));
+    let out = Array.from(am.keys()).map(docId => ({
+      documentId: String(docId),
+      documentName: (info.get(String(docId)) || {}).documentName,
+      batchName: (info.get(String(docId)) || {}).batchName,
+      totalAssigned: am.get(String(docId)) || 0,
+      completed: cm.get(String(docId)) || 0
+    }));
+    // Optional search and pagination
+    const qDocs = String(req.query.q || '').toLowerCase().trim();
+    if (qDocs) {
+      out = out.filter(r => String(r.documentName || '').toLowerCase().includes(qDocs) || String(r.batchName || '').toLowerCase().includes(qDocs));
+    }
+    const limitDocs = Math.max(1, Math.min(Number(req.query.limit || 100), 500));
+    const offsetDocs = Math.max(0, Number(req.query.offset || 0));
+    const pagedDocs = out.slice(offsetDocs, offsetDocs + limitDocs);
+    res.json(pagedDocs);
   });
 
   // Trends over the last 30 days (supports filters)
-  app.get('/api/trends', (req, res) => {
+  app.get('/api/trends', async (req, res) => {
     const filters = [];
     const params = [];
     if (req.query.businessId) { filters.push('r.businessId = ?'); params.push(Number(req.query.businessId)); }
@@ -2057,7 +2365,7 @@ async function start() {
     const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
 
     // Completions per day
-    const completions = all(
+    const completionsMaybe = all(
       `SELECT substr(a.ackDate,1,10) as date, COUNT(*) as cnt
        FROM acks a
        ${filters.length ? 'JOIN recipients r ON r.batchId=a.batchId AND LOWER(r.email)=LOWER(a.email)' : ''}
@@ -2086,7 +2394,7 @@ async function start() {
       );
     }
     // Active users per day (distinct emails with acks)
-    const activeUsers = all(
+    const activeUsersMaybe = all(
       `SELECT substr(a.ackDate,1,10) as date, COUNT(DISTINCT LOWER(a.email)) as cnt
        FROM acks a
        ${filters.length ? 'JOIN recipients r ON r.batchId=a.batchId AND LOWER(r.email)=LOWER(a.email)' : ''}
@@ -2097,10 +2405,15 @@ async function start() {
 
     // Normalize to last 30 days, fill zeros for missing days
     const days = Array.from({ length: 30 }, (_, i) => new Date(Date.now() - (29 - i) * 24*60*60*1000).toISOString().slice(0,10));
+    const toArray = (x) => Array.isArray(x) ? x : ([]);
     const mapRows = (rows) => {
-      const m = new Map(rows.map(r => [String(r.date), Number(r.cnt)]));
+      const arr = toArray(rows);
+      const m = new Map(arr.map(r => [String(r.date), Number(r.cnt)]));
       return days.map(d => ({ date: d, count: Number(m.get(d) || 0) }));
     };
+    const completions = (completionsMaybe && typeof completionsMaybe.then === 'function') ? await completionsMaybe : (completionsMaybe || []);
+    const activeUsers = (activeUsersMaybe && typeof activeUsersMaybe.then === 'function') ? await activeUsersMaybe : (activeUsersMaybe || []);
+    if (newBatches && typeof newBatches.then === 'function') newBatches = await newBatches;
     const series = {
       completions: mapRows(completions),
       newBatches: mapRows(newBatches),
@@ -2117,8 +2430,19 @@ async function start() {
     if (req.query.department) { filters.push('LOWER(department) = ?'); params.push(String(req.query.department).toLowerCase()); }
     if (req.query.primaryGroup) { filters.push('LOWER(primaryGroup) = ?'); params.push(String(req.query.primaryGroup).toLowerCase()); }
     const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
-    const rows = all(`SELECT id, batchId, businessId, user, email, displayName, department, jobTitle, location, primaryGroup FROM recipients ${where} ORDER BY id DESC`, params);
-    res.json(rows);
+    const qRec = String(req.query.q || '').toLowerCase().trim();
+    const limitRec = Math.max(1, Math.min(Number(req.query.limit || 100), 1000));
+    const offsetRec = Math.max(0, Number(req.query.offset || 0));
+    let rows = all(`SELECT id, batchId, businessId, user, email, displayName, department, jobTitle, location, primaryGroup FROM recipients ${where} ORDER BY id DESC`, params);
+    if (qRec) {
+      rows = rows.filter(r => String(r.email || '').toLowerCase().includes(qRec)
+        || String(r.displayName || '').toLowerCase().includes(qRec)
+        || String(r.department || '').toLowerCase().includes(qRec)
+        || String(r.primaryGroup || '').toLowerCase().includes(qRec)
+      );
+    }
+    const paged = rows.slice(offsetRec, offsetRec + limitRec);
+    res.json(paged);
   });
 
   // Recent activity feed: acknowledgements and batch creations (via startDate)
@@ -2375,20 +2699,23 @@ async function start() {
     }
   });
   // Settings API: Legal consent document (global)
-  app.get('/api/settings/legal-consent', (req, res) => {
+  app.get('/api/settings/legal-consent', async (req, res) => {
     try {
+  const isFirebase = (db && (db.driver === 'firebase' || db.driver === 'rtdb'));
       const idRaw = getSetting('legal_consent_file_id', null);
-      const id = idRaw != null ? Number(idRaw) : null;
-      if (!id || !Number.isFinite(id)) return res.json({ fileId: null, url: null, name: null, version: null, sha256: null, size: null, mime: null });
-      const row = one('SELECT id, original_name, sha256, size, mime FROM uploaded_files WHERE id=?', [id]);
+      const id = isFirebase ? (idRaw ? String(idRaw) : null) : (idRaw != null ? Number(idRaw) : null);
+      if ((isFirebase && !id) || (!isFirebase && (!id || !Number.isFinite(id)))) return res.json({ fileId: null, url: null, name: null, version: null, sha256: null, size: null, mime: null });
+      const row = isFirebase
+        ? await one('SELECT id, original_name, sha256, size, mime FROM uploaded_files WHERE id=?', [id])
+        : one('SELECT id, original_name, sha256, size, mime FROM uploaded_files WHERE id=?', [id]);
       if (!row) return res.json({ fileId: null, url: null, name: null, version: null, sha256: null, size: null, mime: null });
       // Try to enrich with legal version metadata if available
       let version = null;
       try {
         const vIdRaw = getSetting('legal_consent_version_id', null);
-        const vId = vIdRaw != null ? Number(vIdRaw) : null;
-        if (vId && Number.isFinite(vId)) {
-          const v = one('SELECT version FROM legal_doc_versions WHERE id=?', [vId]);
+        const vId = isFirebase ? (vIdRaw ? String(vIdRaw) : null) : (vIdRaw != null ? Number(vIdRaw) : null);
+        if ((isFirebase && vId) || (!isFirebase && vId && Number.isFinite(vId))) {
+          const v = isFirebase ? await one('SELECT version FROM legal_doc_versions WHERE id=?', [vId]) : one('SELECT version FROM legal_doc_versions WHERE id=?', [vId]);
           if (v && v.version != null) version = Number(v.version);
         }
       } catch {}
@@ -2397,41 +2724,42 @@ async function start() {
       res.status(500).json({ error: 'failed' });
     }
   });
-  app.put('/api/settings/legal-consent', validate({ type: 'object', required: ['fileId'], additionalProperties: true, properties: { fileId: { anyOf: [{ type: 'integer' }, { type: 'null' }] } } }), (req, res) => {
+  app.put('/api/settings/legal-consent', validate({ type: 'object', required: ['fileId'], additionalProperties: true, properties: { fileId: { anyOf: [{ type: 'integer' }, { type: 'string' }, { type: 'null' }] } } }), async (req, res) => {
     try {
-      const fileId = req.body && req.body.fileId != null ? Number(req.body.fileId) : null;
+  const isFirebase = (db && (db.driver === 'firebase' || db.driver === 'rtdb'));
+      const fileId = req.body && req.body.fileId != null ? (isFirebase ? String(req.body.fileId) : Number(req.body.fileId)) : null;
       if (fileId === null) {
         // clear
-        setSetting('legal_consent_file_id', '');
-        try { setSetting('legal_consent_version_id', ''); } catch {}
+        await setSettingAsync('legal_consent_file_id', '');
+        try { await setSettingAsync('legal_consent_version_id', ''); } catch {}
         return res.json({ fileId: null });
       }
-      if (!Number.isFinite(fileId) || fileId <= 0) return res.status(400).json({ error: 'invalid_file_id' });
-      const exists = one('SELECT id, original_name, sha256, size, mime FROM uploaded_files WHERE id=?', [fileId]);
+      if ((!isFirebase && (!Number.isFinite(fileId) || fileId <= 0)) || (isFirebase && !fileId)) return res.status(400).json({ error: 'invalid_file_id' });
+      const exists = isFirebase ? await one('SELECT id, original_name, sha256, size, mime FROM uploaded_files WHERE id=?', [fileId]) : one('SELECT id, original_name, sha256, size, mime FROM uploaded_files WHERE id=?', [fileId]);
       if (!exists) return res.status(404).json({ error: 'file_not_found' });
-      const ok = setSetting('legal_consent_file_id', String(fileId));
+      const ok = await setSettingAsync('legal_consent_file_id', String(fileId));
       if (!ok) return res.status(500).json({ error: 'save_failed' });
       // Record a new legal document version if not present for this sha256
       try {
         const sha = String(exists.sha256 || '');
         let verRow = null;
         if (sha) {
-          verRow = one('SELECT id, version FROM legal_doc_versions WHERE sha256=? ORDER BY version DESC LIMIT 1', [sha]);
+          verRow = isFirebase ? await one('SELECT id, version FROM legal_doc_versions WHERE sha256=? ORDER BY version DESC LIMIT 1', [sha]) : one('SELECT id, version FROM legal_doc_versions WHERE sha256=? ORDER BY version DESC LIMIT 1', [sha]);
         }
         if (!verRow) {
           // Determine next version number
-          const maxVer = one('SELECT MAX(version) AS v FROM legal_doc_versions');
+          const maxVer = isFirebase ? await one('SELECT MAX(version) AS v FROM legal_doc_versions') : one('SELECT MAX(version) AS v FROM legal_doc_versions');
           const nextVer = (maxVer && maxVer.v != null) ? (Number(maxVer.v) + 1) : 1;
           const now = new Date().toISOString();
           const createdBy = String((req.headers['x-user-email'] || req.headers['x-admin-email'] || '')).toLowerCase() || null;
           db.run(`INSERT INTO legal_doc_versions (file_id, sha256, name, size, mime, effective_from, version, created_at, created_by)
                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                   [fileId, exists.sha256 || null, exists.original_name || null, exists.size || null, exists.mime || null, now, nextVer, now, createdBy]);
-          const vId = one('SELECT last_insert_rowid() as id')?.id;
-          if (vId) setSetting('legal_consent_version_id', String(vId));
+          const vId = isFirebase ? (await one('SELECT last_insert_rowid() as id'))?.id : one('SELECT last_insert_rowid() as id')?.id;
+          if (vId) await setSettingAsync('legal_consent_version_id', String(vId));
         } else {
           // If already versioned for this sha, just mark current as active
-          setSetting('legal_consent_version_id', String(verRow.id));
+          await setSettingAsync('legal_consent_version_id', String(verRow.id));
         }
       } catch {}
       res.json({ fileId });
@@ -2623,101 +2951,231 @@ async function start() {
     }
   });
 
+  // Admin export: Acknowledgements with legal consent context (yearly)
+  // GET /api/admin/acks/export?year=2025&email=user@org.com&batchId=123
+  app.get('/api/admin/acks/export', async (req, res) => {
+    try {
+      const isFirebase = (db && (db.driver === 'firebase' || db.driver === 'rtdb'));
+      const year = String(req.query.year || '').trim();
+      if (!/^\d{4}$/.test(year)) {
+        const y = new Date().getUTCFullYear();
+        req.query.year = String(y);
+      }
+      const Y = String(req.query.year);
+      const emailFilter = String(req.query.email || '').trim().toLowerCase();
+      const batchFilter = String(req.query.batchId || '').trim();
+
+      if (isFirebase) {
+        // Fetch tables and compute in JS
+        const [acksMaybe, docsMaybe, batchesMaybe, recsMaybe, consentsMaybe] = [
+          all('SELECT batchId, documentId, email, ackDate FROM acks'),
+          all('SELECT id, title, batchId FROM documents'),
+          all('SELECT id, name FROM batches'),
+          all('SELECT batchId, email, displayName, department, jobTitle, location, primaryGroup, businessId FROM recipients'),
+          all('SELECT LOWER(email) as email, consented_at as consentedAt FROM consents')
+        ];
+        const acks = (acksMaybe && typeof acksMaybe.then === 'function') ? await acksMaybe : (acksMaybe || []);
+        const docs = (docsMaybe && typeof docsMaybe.then === 'function') ? await docsMaybe : (docsMaybe || []);
+        const batches = (batchesMaybe && typeof batchesMaybe.then === 'function') ? await batchesMaybe : (batchesMaybe || []);
+        const recs = (recsMaybe && typeof recsMaybe.then === 'function') ? await recsMaybe : (recsMaybe || []);
+        const consents = (consentsMaybe && typeof consentsMaybe.then === 'function') ? await consentsMaybe : (consentsMaybe || []);
+
+        const byDoc = new Map(docs.map(d => [String(d.id), d]));
+        const byBatch = new Map(batches.map(b => [String(b.id), b]));
+        const recIndex = new Map(); // key: batchId|emailLower
+        for (const r of recs) {
+          const key = `${String(r.batchId)}|${String(r.email || '').toLowerCase()}`;
+          if (!recIndex.has(key)) recIndex.set(key, r);
+        }
+        const latestConsentYear = new Map(); // key: emailLower|YYYY -> iso
+        for (const c of consents) {
+          const em = String(c.email || '').toLowerCase();
+          const ts = String(c.consentedAt || '');
+          if (!/^\d{4}/.test(ts)) continue;
+          const yy = ts.slice(0,4);
+          const k = `${em}|${yy}`;
+          const cur = latestConsentYear.get(k);
+          if (!cur || String(ts) > String(cur)) latestConsentYear.set(k, ts);
+        }
+
+        const rows = [];
+        for (const a of acks) {
+          const ts = String(a.ackDate || '');
+          if (!/^\d{4}/.test(ts)) continue;
+          if (ts.slice(0,4) !== Y) continue;
+          const em = String(a.email || '').toLowerCase();
+          if (emailFilter && em !== emailFilter) continue;
+          if (batchFilter && String(a.batchId) !== batchFilter) continue;
+          const d = byDoc.get(String(a.documentId)) || {};
+          const b = byBatch.get(String(a.batchId)) || {};
+          const r = recIndex.get(`${String(a.batchId)}|${em}`) || {};
+          const consentAt = latestConsentYear.get(`${em}|${Y}`) || null;
+          rows.push({
+            year: Y,
+            batchId: String(a.batchId),
+            batchName: b.name || null,
+            documentId: String(a.documentId),
+            documentTitle: d.title || null,
+            email: em,
+            displayName: r.displayName || r.email || em,
+            department: r.department || null,
+            jobTitle: r.jobTitle || null,
+            location: r.location || null,
+            primaryGroup: r.primaryGroup || null,
+            businessId: r.businessId != null ? Number(r.businessId) : null,
+            acknowledgedAt: ts,
+            legalConsentedAt: consentAt
+          });
+        }
+        // Sort for stable output
+        rows.sort((x,y) => (x.acknowledgedAt < y.acknowledgedAt ? -1 : x.acknowledgedAt > y.acknowledgedAt ? 1 : 0));
+        return res.json({ records: rows });
+      }
+
+      // SQL path
+      const params = [Y, Y];
+      let where = 'WHERE substr(a.ackDate,1,4)=?';
+      if (emailFilter) { where += ' AND LOWER(a.email)=?'; params.push(emailFilter); }
+      if (batchFilter) { where += ' AND a.batchId=?'; params.push(Number(batchFilter)); }
+      const rows = all(
+        `SELECT ? as year,
+                a.batchId as batchId,
+                b.name as batchName,
+                a.documentId as documentId,
+                d.title as documentTitle,
+                LOWER(a.email) as email,
+                COALESCE(r.displayName, a.email) as displayName,
+                r.department as department,
+                r.jobTitle as jobTitle,
+                r.location as location,
+                r.primaryGroup as primaryGroup,
+                r.businessId as businessId,
+                a.ackDate as acknowledgedAt,
+                c.legalConsentedAt as legalConsentedAt
+         FROM acks a
+         JOIN documents d ON d.id=a.documentId
+         JOIN batches b ON b.id=a.batchId
+         LEFT JOIN recipients r ON r.batchId=a.batchId AND LOWER(r.email)=LOWER(a.email)
+         LEFT JOIN (
+           SELECT LOWER(email) as email_l, MAX(consented_at) as legalConsentedAt
+           FROM consents
+           WHERE consented_at IS NOT NULL AND substr(consented_at,1,4)=?
+           GROUP BY LOWER(email)
+         ) c ON c.email_l = LOWER(a.email)
+         ${where}
+         ORDER BY a.ackDate ASC`, params
+      );
+      return res.json({ records: rows || [] });
+    } catch (e) {
+      res.status(500).json({ error: 'export_failed', details: e?.message || String(e) });
+    }
+  });
+
   // --- Policy Scheduling (HR annual/recurring acknowledgements) ---
   // Admin CRUD for policy rules (tenant-aware; SuperAdmin guard already applied for /api/admin/*)
-  app.get('/api/admin/policies', (req, res) => {
+  app.get('/api/admin/policies', async (req, res) => {
     try {
-      const tenantId = req.query.tenantId != null ? Number(req.query.tenantId) : (req?.tenant?.id || null);
+      const isFirebase = (db && (db.driver === 'firebase' || db.driver === 'rtdb'));
+      const tenantId = req.query.tenantId != null ? (isFirebase ? String(req.query.tenantId) : Number(req.query.tenantId)) : (req?.tenant?.id || null);
       const where = tenantId != null ? 'WHERE tenant_id=?' : '';
       const params = tenantId != null ? [tenantId] : [];
-      const rows = all(`SELECT id, name, description, frequency, interval_days as intervalDays, required, file_id as fileId, sha256, tenant_id as tenantId, active, start_on as startOn, due_in_days as dueInDays, grace_days as graceDays, created_at as createdAt, updated_at as updatedAt FROM policy_rules ${where} ORDER BY id DESC`, params);
-      // attach fileIds mapping (if exists)
-      const policies = rows.map(r => {
-        const files = allQuiet('SELECT file_id as fileId, sha256 FROM policy_rule_files WHERE policy_rule_id=? ORDER BY file_id', [r.id]);
+      const maybe = all(`SELECT id, name, description, frequency, interval_days as intervalDays, required, file_id as fileId, sha256, tenant_id as tenantId, active, start_on as startOn, due_in_days as dueInDays, grace_days as graceDays, created_at as createdAt, updated_at as updatedAt FROM policy_rules ${where} ORDER BY id DESC`, params);
+      const rows = (maybe && typeof maybe.then === 'function') ? await maybe : (maybe || []);
+      // attach fileIds mapping (if exists) - async-aware
+      const policies = await Promise.all((rows || []).map(async (r) => {
+        const maybeFiles = allQuiet('SELECT file_id as fileId, sha256 FROM policy_rule_files WHERE policy_rule_id=? ORDER BY file_id', [r.id]);
+        const files = (maybeFiles && typeof maybeFiles.then === 'function') ? await maybeFiles : (maybeFiles || []);
         const fileIds = files.length ? files.map(f => Number(f.fileId)) : (r.fileId ? [Number(r.fileId)] : []);
         return { ...r, required: !!r.required, active: !!r.active, fileIds };
-      });
+      }));
       res.json({ policies });
     } catch (e) { res.status(500).json({ error: 'list_failed' }); }
   });
-  app.post('/api/admin/policies', validate({ type: 'object', required: ['name'], additionalProperties: true, properties: { name: { type: 'string', minLength: 1 }, description: { type: ['string','null'] }, frequency: { type: 'string' }, intervalDays: { type: ['integer','null'] }, required: { type: 'boolean' }, fileId: { type: ['integer','null'] }, fileIds: { type: 'array', items: { type: 'integer', minimum: 1 } }, startOn: { type: ['string','null'] }, dueInDays: { type: ['integer','null'] }, graceDays: { type: ['integer','null'] }, active: { type: 'boolean' } } }), (req, res) => {
+  app.post('/api/admin/policies', validate({ type: 'object', required: ['name'], additionalProperties: true, properties: { name: { type: 'string', minLength: 1 }, description: { type: ['string','null'] }, frequency: { type: 'string' }, intervalDays: { type: ['integer','null'] }, required: { type: 'boolean' }, fileId: { type: ['integer','null'] }, fileIds: { type: 'array', items: { type: 'integer', minimum: 1 } }, startOn: { type: ['string','null'] }, dueInDays: { type: ['integer','null'] }, graceDays: { type: ['integer','null'] }, active: { type: 'boolean' } } }), async (req, res) => {
     try {
+      const isFirebase = (db && (db.driver === 'firebase' || db.driver === 'rtdb'));
       const tenantId = req?.tenant?.id || null;
       const { name, description=null, frequency='annual', intervalDays=null, required=true, fileId=null, fileIds=null, startOn=null, dueInDays=30, graceDays=0, active=true } = req.body || {};
       const ids = Array.isArray(fileIds) ? fileIds.map(Number).filter(n => Number.isFinite(n) && n>0) : (fileId ? [Number(fileId)] : []);
       if (!name || ids.length === 0) return res.status(400).json({ error: 'name_and_files_required' });
-      // validate files
-      const valid = ids.map(id => one('SELECT id, sha256 FROM uploaded_files WHERE id=?', [id])).filter(Boolean);
+      // validate files (async-aware)
+      const fileRows = await Promise.all(ids.map(fid => one('SELECT id, sha256 FROM uploaded_files WHERE id=?', [fid])));
+      const valid = fileRows.filter(Boolean);
       if (valid.length !== ids.length) return res.status(404).json({ error: 'file_not_found' });
       const first = valid[0];
       const now = new Date().toISOString();
-      db.run(`INSERT INTO policy_rules (tenant_id, name, description, frequency, interval_days, required, file_id, sha256, active, start_on, due_in_days, grace_days, created_at, updated_at)
+      await db.run(`INSERT INTO policy_rules (tenant_id, name, description, frequency, interval_days, required, file_id, sha256, active, start_on, due_in_days, grace_days, created_at, updated_at)
               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-              [tenantId, String(name), description, String(frequency), intervalDays!=null?Number(intervalDays):null, required?1:0, Number(first.id), first.sha256 || null, active?1:0, startOn, Number(dueInDays)||0, Number(graceDays)||0, now, now]);
-      const id = one('SELECT last_insert_rowid() as id')?.id;
+              [tenantId, String(name), description, String(frequency), intervalDays!=null?Number(intervalDays):null, required?1:0, isFirebase ? String(first.id) : Number(first.id), first.sha256 || null, active?1:0, startOn, Number(dueInDays)||0, Number(graceDays)||0, now, now]);
+      const idRowMaybe = db.query('SELECT last_insert_rowid() as id');
+      const idRow = (idRowMaybe && typeof idRowMaybe.then === 'function') ? await idRowMaybe : idRowMaybe;
+      const id = Array.isArray(idRow) && idRow[0] ? idRow[0].id : null;
       // insert mapping rows
       for (const fid of ids) {
         try {
-          const rec = one('SELECT sha256 FROM uploaded_files WHERE id=?', [fid]);
-          db.run('INSERT OR IGNORE INTO policy_rule_files (policy_rule_id, file_id, sha256) VALUES (?, ?, ?)', [id, fid, rec?.sha256 || null]);
+          const rec = await one('SELECT sha256 FROM uploaded_files WHERE id=?', [fid]);
+          await db.run('INSERT OR IGNORE INTO policy_rule_files (policy_rule_id, file_id, sha256) VALUES (?, ?, ?)', [id, fid, rec?.sha256 || null]);
         } catch {}
       }
       persist(db);
       res.json({ id });
     } catch (e) { res.status(500).json({ error: 'create_failed' }); }
   });
-  app.put('/api/admin/policies/:id', validate({ type: 'object', additionalProperties: true, properties: { name: { type: ['string','null'] }, description: { type: ['string','null'] }, frequency: { type: ['string','null'] }, intervalDays: { type: ['integer','null'] }, required: { type: ['boolean','null'] }, fileId: { type: ['integer','null'] }, fileIds: { type: 'array', items: { type: 'integer', minimum: 1 } }, active: { type: ['boolean','null'] }, startOn: { type: ['string','null'] }, dueInDays: { type: ['integer','null'] }, graceDays: { type: ['integer','null'] } } }), (req, res) => {
+  app.put('/api/admin/policies/:id', validate({ type: 'object', additionalProperties: true, properties: { name: { type: ['string','null'] }, description: { type: ['string','null'] }, frequency: { type: ['string','null'] }, intervalDays: { type: ['integer','null'] }, required: { type: ['boolean','null'] }, fileId: { type: ['integer','null'] }, fileIds: { type: 'array', items: { type: 'integer', minimum: 1 } }, active: { type: ['boolean','null'] }, startOn: { type: ['string','null'] }, dueInDays: { type: ['integer','null'] }, graceDays: { type: ['integer','null'] } } }), async (req, res) => {
     try {
-      const id = Number(req.params.id);
-      const cur = one('SELECT * FROM policy_rules WHERE id=?', [id]);
+      const isFirebase = (db && (db.driver === 'firebase' || db.driver === 'rtdb'));
+      const id = isFirebase ? String(req.params.id) : Number(req.params.id);
+      const cur = await one('SELECT * FROM policy_rules WHERE id=?', [id]);
       if (!cur) return res.status(404).json({ error: 'not_found' });
       const { name, description, frequency, intervalDays, required, fileId, fileIds, active, startOn, dueInDays, graceDays } = req.body || {};
       let sha = cur.sha256;
-      if (fileId != null && Number(fileId) !== cur.file_id) {
-        const f = one('SELECT sha256 FROM uploaded_files WHERE id=?', [Number(fileId)]);
+      if (fileId != null && ((isFirebase ? String(fileId) : Number(fileId)) !== cur.file_id)) {
+        const f = await one('SELECT sha256 FROM uploaded_files WHERE id=?', [isFirebase ? String(fileId) : Number(fileId)]);
         if (!f) return res.status(404).json({ error: 'file_not_found' });
         sha = f.sha256 || null;
       }
       const now = new Date().toISOString();
-      db.run(`UPDATE policy_rules SET name=COALESCE(?, name), description=COALESCE(?, description), frequency=COALESCE(?, frequency), interval_days=COALESCE(?, interval_days), required=COALESCE(?, required), file_id=COALESCE(?, file_id), sha256=COALESCE(?, sha256), active=COALESCE(?, active), start_on=COALESCE(?, start_on), due_in_days=COALESCE(?, due_in_days), grace_days=COALESCE(?, grace_days), updated_at=? WHERE id=?`,
+      await db.run(`UPDATE policy_rules SET name=COALESCE(?, name), description=COALESCE(?, description), frequency=COALESCE(?, frequency), interval_days=COALESCE(?, interval_days), required=COALESCE(?, required), file_id=COALESCE(?, file_id), sha256=COALESCE(?, sha256), active=COALESCE(?, active), start_on=COALESCE(?, start_on), due_in_days=COALESCE(?, due_in_days), grace_days=COALESCE(?, grace_days), updated_at=? WHERE id=?`,
         [name ?? null, description ?? null, frequency ?? null, intervalDays ?? null, required!=null?(required?1:0):null, fileId ?? null, sha, active!=null?(active?1:0):null, startOn ?? null, dueInDays ?? null, graceDays ?? null, now, id]);
       // Replace mapping if fileIds provided
       if (Array.isArray(fileIds)) {
-        try { db.run('DELETE FROM policy_rule_files WHERE policy_rule_id=?', [id]); } catch {}
+        try { await db.run('DELETE FROM policy_rule_files WHERE policy_rule_id=?', [id]); } catch {}
         const ids = fileIds.map(Number).filter(n => Number.isFinite(n) && n>0);
         for (const fid of ids) {
           try {
-            const rec = one('SELECT sha256 FROM uploaded_files WHERE id=?', [fid]);
-            db.run('INSERT OR IGNORE INTO policy_rule_files (policy_rule_id, file_id, sha256) VALUES (?, ?, ?)', [id, fid, rec?.sha256 || null]);
+            const rec = await one('SELECT sha256 FROM uploaded_files WHERE id=?', [fid]);
+            await db.run('INSERT OR IGNORE INTO policy_rule_files (policy_rule_id, file_id, sha256) VALUES (?, ?, ?)', [id, fid, rec?.sha256 || null]);
           } catch {}
         }
         // ensure primary file_id follows first of list, for backward compatibility
         if (ids.length) {
           const first = ids[0];
-          const f = one('SELECT sha256 FROM uploaded_files WHERE id=?', [first]);
-          db.run('UPDATE policy_rules SET file_id=?, sha256=? WHERE id=?', [first, f?.sha256 || null, id]);
+          const f = await one('SELECT sha256 FROM uploaded_files WHERE id=?', [first]);
+          await db.run('UPDATE policy_rules SET file_id=?, sha256=? WHERE id=?', [first, f?.sha256 || null, id]);
         }
       }
       persist(db);
       res.json({ ok: true });
     } catch (e) { res.status(500).json({ error: 'update_failed' }); }
   });
-  app.delete('/api/admin/policies/:id', (req, res) => {
+  app.delete('/api/admin/policies/:id', async (req, res) => {
     try {
-      const id = Number(req.params.id);
-      db.run('DELETE FROM policy_rules WHERE id=?', [id]);
+      const isFirebase = (db && (db.driver === 'firebase' || db.driver === 'rtdb'));
+      const id = isFirebase ? String(req.params.id) : Number(req.params.id);
+      await db.run('DELETE FROM policy_rules WHERE id=?', [id]);
       persist(db);
       res.json({ ok: true });
     } catch (e) { res.status(500).json({ error: 'delete_failed' }); }
   });
 
   // Calculate due policies for a user (email required)
-  app.get('/api/policies/due', validate({ type: 'object', required: ['email'], additionalProperties: true, properties: { email: { type: 'string', format: 'email' } } }, 'query'), (req, res) => {
+  app.get('/api/policies/due', validate({ type: 'object', required: ['email'], additionalProperties: true, properties: { email: { type: 'string', format: 'email' } } }, 'query'), async (req, res) => {
     try {
       const tenantId = req?.tenant?.id || null;
       const email = String(req.query.email || '').trim().toLowerCase();
       if (!email || !email.includes('@')) return res.status(400).json({ error: 'email_required' });
-  const policies = all(`SELECT id, name, description, frequency, interval_days as intervalDays, required, file_id as fileId, sha256, tenant_id as tenantId, active, start_on as startOn, due_in_days as dueInDays, grace_days as graceDays FROM policy_rules WHERE active=1 AND (tenant_id IS ? OR tenant_id=?)`, [tenantId, tenantId]);
+      const maybePolicies = all(`SELECT id, name, description, frequency, interval_days as intervalDays, required, file_id as fileId, sha256, tenant_id as tenantId, active, start_on as startOn, due_in_days as dueInDays, grace_days as graceDays FROM policy_rules WHERE active=1 AND (tenant_id = ? OR tenant_id = ?)`, [tenantId, tenantId]);
+      const policies = (maybePolicies && typeof maybePolicies.then === 'function') ? await maybePolicies : (maybePolicies || []);
       const now = new Date();
       const freqDays = (p) => {
         const f = String(p.frequency || 'annual').toLowerCase();
@@ -2733,8 +3191,9 @@ async function start() {
       const dueList = [];
       for (const p of policies) {
         // Determine files: mapping table or fallback to single fileId
-        const mapped = allQuiet('SELECT file_id as fileId FROM policy_rule_files WHERE policy_rule_id=?', [p.id]);
-        const files = mapped.length ? mapped.map(r => Number(r.fileId)) : (p.fileId ? [Number(p.fileId)] : []);
+  const mappedMaybe = allQuiet('SELECT file_id as fileId FROM policy_rule_files WHERE policy_rule_id=?', [p.id]);
+  const mapped = (mappedMaybe && typeof mappedMaybe.then === 'function') ? await mappedMaybe : (mappedMaybe || []);
+  const files = mapped.length ? mapped.map(r => Number(r.fileId)) : (p.fileId ? [Number(p.fileId)] : []);
         if (!files.length) continue;
         // For each file in this policy, compute due separately
         for (const fid of files) {
@@ -2841,30 +3300,42 @@ async function start() {
     }
   });
   // Businesses
-  app.get('/api/businesses', (_req, res) => {
-    const rows = all('SELECT id, name, code, isActive, description FROM businesses ORDER BY name');
-    res.json(rows.map(r => ({ id: r.id, name: r.name, code: r.code, isActive: !!r.isActive, description: r.description })));
+  app.get('/api/businesses', async (_req, res) => {
+    try {
+      const maybe = all('SELECT id, name, code, isActive, description FROM businesses ORDER BY name');
+      const rows = (maybe && typeof maybe.then === 'function') ? await maybe : (maybe || []);
+      res.json((Array.isArray(rows) ? rows : []).map(r => ({ id: r.id, name: r.name, code: r.code, isActive: !!r.isActive, description: r.description })));
+    } catch (e) { res.status(500).json({ error: 'list_failed', details: e?.message || String(e) }); }
   });
   // Create business
-  app.post('/api/businesses', (req, res) => {
+  app.post('/api/businesses', async (req, res) => {
     const { name, code = null, isActive = true, description = null } = req.body || {};
     if (!name || String(name).trim().length === 0) return res.status(400).json({ error: 'name_required' });
     try {
-      db.run('INSERT INTO businesses (name, code, isActive, description) VALUES (?, ?, ?, ?)', [String(name).trim(), code, isActive ? 1 : 0, description]);
-      const id = one('SELECT last_insert_rowid() as id')?.id;
-      persist(db);
-      res.json({ id });
+      if (db && (db.driver === 'firebase' || db.driver === 'rtdb')) {
+        await db.run('INSERT INTO businesses (name, code, isActive, description) VALUES (?, ?, ?, ?)', [String(name).trim(), code, isActive ? 1 : 0, description]);
+        const rows = await db.query('SELECT last_insert_rowid() as id');
+        const id = Array.isArray(rows) && rows[0] ? rows[0].id : null;
+        try { persist(db); } catch {}
+        return res.json({ id });
+      } else {
+        db.run('INSERT INTO businesses (name, code, isActive, description) VALUES (?, ?, ?, ?)', [String(name).trim(), code, isActive ? 1 : 0, description]);
+        const id = one('SELECT last_insert_rowid() as id')?.id;
+        persist(db);
+        return res.json({ id });
+      }
     } catch (e) {
       console.error('Create business failed', e);
       res.status(500).json({ error: 'insert_failed' });
     }
   });
   // Update business
-  app.put('/api/businesses/:id', (req, res) => {
-    const id = Number(req.params.id);
+  app.put('/api/businesses/:id', async (req, res) => {
+  const isFirebase = (db && (db.driver === 'firebase' || db.driver === 'rtdb'));
+    const id = isFirebase ? String(req.params.id) : Number(req.params.id);
     const { name, code, isActive, description } = req.body || {};
     try {
-      const current = one('SELECT id, name, code, isActive, description FROM businesses WHERE id=?', [id]);
+      const current = isFirebase ? await one('SELECT id, name, code, isActive, description FROM businesses WHERE id=?', [id]) : one('SELECT id, name, code, isActive, description FROM businesses WHERE id=?', [id]);
       if (!current) return res.status(404).json({ error: 'not_found' });
       const next = {
         name: name != null ? String(name).trim() : current.name,
@@ -2872,7 +3343,7 @@ async function start() {
         isActive: isActive != null ? (isActive ? 1 : 0) : current.isActive,
         description: description != null ? description : current.description
       };
-      db.run('UPDATE businesses SET name=?, code=?, isActive=?, description=? WHERE id=?', [next.name, next.code, next.isActive, next.description, id]);
+      await db.run('UPDATE businesses SET name=?, code=?, isActive=?, description=? WHERE id=?', [next.name, next.code, next.isActive, next.description, id]);
       persist(db);
       res.json({ ok: true });
     } catch (e) {
@@ -2881,59 +3352,132 @@ async function start() {
     }
   });
   // Delete business (sets recipients.businessId = NULL for references)
-  app.delete('/api/businesses/:id', (req, res) => {
-    const id = Number(req.params.id);
+  app.delete('/api/businesses/:id', async (req, res) => {
+  const isFirebase = (db && (db.driver === 'firebase' || db.driver === 'rtdb'));
+    const id = isFirebase ? String(req.params.id) : Number(req.params.id);
     try {
-      db.run('BEGIN');
-      db.run('UPDATE recipients SET businessId=NULL WHERE businessId=?', [id]);
-      db.run('DELETE FROM businesses WHERE id=?', [id]);
-      db.run('COMMIT');
+      await db.run('BEGIN');
+      await db.run('UPDATE recipients SET businessId=NULL WHERE businessId=?', [id]);
+      await db.run('DELETE FROM businesses WHERE id=?', [id]);
+      await db.run('COMMIT');
       persist(db);
       res.json({ ok: true });
     } catch (e) {
-      try { db.run('ROLLBACK'); } catch {}
+      try { await db.run('ROLLBACK'); } catch {}
       console.error('Delete business failed', e);
       res.status(500).json({ error: 'delete_failed' });
     }
   });
 
   // Batches assigned to a user (via recipients)
-  app.get('/api/batches', (req, res) => {
-    const email = (req.query.email || '').toString().trim().toLowerCase();
-    if (!email) {
-      // return all (admin view) if no email specified
-      const rows = all('SELECT id, name, startDate, dueDate, status, description FROM batches ORDER BY id DESC');
-      return res.json(rows.map(mapBatch));
+  app.get('/api/batches', async (req, res) => {
+    try {
+      const email = (req.query.email || '').toString().trim().toLowerCase();
+      const isFirebase = (db && (db.driver === 'firebase' || db.driver === 'rtdb'));
+      if (!email) {
+        // return all (admin view) if no email specified
+        const maybe = db.query('SELECT id, name, startDate, dueDate, status, description FROM batches ORDER BY id DESC');
+        const rows = (maybe && typeof maybe.then === 'function') ? await maybe : (maybe || []);
+        return res.json((Array.isArray(rows) ? rows : []).map(mapBatch));
+      }
+
+      // Firebase/RTDB adapters do not support SQL JOINs reliably; compute in JS
+      if (isFirebase) {
+        // Get recipient rows for this email (case-insensitive)
+        const recMaybe = all('SELECT batchId FROM recipients WHERE LOWER(email)=LOWER(?)', [email]);
+        const recRows = (recMaybe && typeof recMaybe.then === 'function') ? await recMaybe : (recMaybe || []);
+        const idSet = new Set((Array.isArray(recRows) ? recRows : []).map(r => String(r.batchId)));
+        if (idSet.size === 0) return res.json([]);
+        // Fetch all batches and filter by the recipient-linked ids
+        const bMaybe = all('SELECT id, name, startDate, dueDate, status, description FROM batches');
+        let batches = (bMaybe && typeof bMaybe.then === 'function') ? await bMaybe : (bMaybe || []);
+        batches = (Array.isArray(batches) ? batches : []).filter(b => idSet.has(String(b.id)));
+        // Sort by id desc (string ids under RTDB)
+        batches.sort((a, b) => String(b.id).localeCompare(String(a.id)));
+        return res.json(batches.map(mapBatch));
+      }
+
+      // Default SQL path (sqlite/libsql)
+      const maybe2 = db.query(
+        `SELECT DISTINCT b.id, b.name, b.startDate, b.dueDate, b.status, b.description
+         FROM batches b
+         JOIN recipients r ON r.batchId=b.id
+         WHERE LOWER(r.email)=? ORDER BY b.id DESC`, [email]
+      );
+      const rows2 = (maybe2 && typeof maybe2.then === 'function') ? await maybe2 : (maybe2 || []);
+      return res.json((Array.isArray(rows2) ? rows2 : []).map(mapBatch));
+    } catch (e) {
+      return res.status(500).json({ error: 'list_failed', details: e?.message || String(e) });
     }
-    const rows = all(
-      `SELECT DISTINCT b.id, b.name, b.startDate, b.dueDate, b.status, b.description
-       FROM batches b
-       JOIN recipients r ON r.batchId=b.id
-       WHERE LOWER(r.email)=? ORDER BY b.id DESC`, [email]
-    );
-    res.json(rows.map(mapBatch));
   });
 
   // Documents by batch
-  app.get('/api/batches/:id/documents', (req, res) => {
-    const id = Number(req.params.id);
-    const rows = all('SELECT id, batchId, title, url, version, requiresSignature, driveId, itemId, source, localFileId, localUrl FROM documents WHERE batchId=? ORDER BY id', [id]);
-    res.json(rows.map(mapDoc));
+  app.get('/api/batches/:id/documents', async (req, res) => {
+  const isFirebase = (db && (db.driver === 'firebase' || db.driver === 'rtdb'));
+  const id = isFirebase ? String(req.params.id) : Number(req.params.id);
+    const maybe = all('SELECT id, batchId, title, url, version, requiresSignature, driveId, itemId, source, localFileId, localUrl FROM documents WHERE batchId=? ORDER BY id', [id]);
+    const rows = (maybe && typeof maybe.then === 'function') ? await maybe : (maybe || []);
+    res.json((Array.isArray(rows) ? rows : []).map(mapDoc));
   });
 
   // Recipients by batch (convenience for verification and UI)
-  app.get('/api/batches/:id/recipients', (req, res) => {
-    const id = Number(req.params.id);
-    const rows = all('SELECT id, batchId, businessId, user, email, displayName, department, jobTitle, location, primaryGroup FROM recipients WHERE batchId=? ORDER BY id DESC', [id]);
-    res.json(rows);
+  app.get('/api/batches/:id/recipients', async (req, res) => {
+  const isFirebase = (db && (db.driver === 'firebase' || db.driver === 'rtdb'));
+  const id = isFirebase ? String(req.params.id) : Number(req.params.id);
+    const maybe = all('SELECT id, batchId, businessId, user, email, displayName, department, jobTitle, location, primaryGroup FROM recipients WHERE batchId=? ORDER BY id DESC', [id]);
+    const rows = (maybe && typeof maybe.then === 'function') ? await maybe : (maybe || []);
+    res.json(Array.isArray(rows) ? rows : []);
   });
 
   // Completion status for all recipients in a batch
   // Returns [{ email, displayName, department, jobTitle, location, primaryGroup, businessId, businessName, acknowledged, total, completed, completionAt }]
-  app.get('/api/batches/:id/completions', (req, res) => {
+  app.get('/api/batches/:id/completions', async (req, res) => {
     try {
-      const id = Number(req.params.id);
-      if (!Number.isFinite(id)) return res.status(400).json({ error: 'invalid_batch_id' });
+      const isFirebase = (db && (db.driver === 'firebase' || db.driver === 'rtdb'));
+      const id = isFirebase ? String(req.params.id) : Number(req.params.id);
+      if ((!isFirebase && !Number.isFinite(id)) || (isFirebase && !id)) return res.status(400).json({ error: 'invalid_batch_id' });
+
+      if (isFirebase) {
+        const docsMaybe = all('SELECT id FROM documents WHERE batchId=?', [id]);
+        const docs = (docsMaybe && typeof docsMaybe.then === 'function') ? await docsMaybe : (docsMaybe || []);
+        const total = Array.isArray(docs) ? docs.length : 0;
+        if (total === 0) return res.json([]);
+
+        const recMaybe = all('SELECT email, displayName, department, jobTitle, location, primaryGroup, businessId FROM recipients WHERE batchId=?', [id]);
+        const recs = (recMaybe && typeof recMaybe.then === 'function') ? await recMaybe : (recMaybe || []);
+        const ackMaybe = all('SELECT email, ackDate, acknowledged FROM acks WHERE batchId=?', [id]);
+        const acks = (ackMaybe && typeof ackMaybe.then === 'function') ? await ackMaybe : (ackMaybe || []);
+        const bizMaybe = all('SELECT id, name FROM businesses');
+        const businesses = (bizMaybe && typeof bizMaybe.then === 'function') ? await bizMaybe : (bizMaybe || []);
+        const bizMap = new Map((Array.isArray(businesses) ? businesses : []).map(b => [String(b.id), b.name]));
+
+        const grouped = {};
+        for (const r of (Array.isArray(recs) ? recs : [])) {
+          const email = String(r.email || '').toLowerCase();
+          if (!email) continue;
+          const emailAcks = (Array.isArray(acks) ? acks : []).filter(a => String(a.email || '').toLowerCase() === email && (a.acknowledged ? 1 : 0) === 1);
+          const acknowledged = emailAcks.length;
+          const completed = acknowledged >= total;
+          const lastAckDate = emailAcks.reduce((m, a) => (m && m > a.ackDate ? m : a.ackDate), null);
+          grouped[email] = {
+            email,
+            displayName: r.displayName || r.email || '',
+            department: r.department || null,
+            jobTitle: r.jobTitle || null,
+            location: r.location || null,
+            primaryGroup: r.primaryGroup || null,
+            businessId: r.businessId != null ? (isFirebase ? String(r.businessId) : Number(r.businessId)) : null,
+            businessName: r.businessId != null ? (bizMap.get(String(r.businessId)) || null) : null,
+            acknowledged,
+            total,
+            completed,
+            completionAt: completed ? (lastAckDate || null) : null
+          };
+        }
+        return res.json(Object.values(grouped));
+      }
+
+      // Default SQL path (sqlite/libsql)
       const totalRow = one('SELECT COUNT(*) as c FROM documents WHERE batchId=?', [id]);
       const total = totalRow?.c || 0;
       if (total === 0) return res.json([]);
@@ -2980,19 +3524,34 @@ async function start() {
   });
 
   // Acked doc ids for user
-  app.get('/api/batches/:id/acks', (req, res) => {
-    const id = Number(req.params.id);
+  app.get('/api/batches/:id/acks', async (req, res) => {
+    const isFirebase = (db && (db.driver === 'firebase' || db.driver === 'rtdb'));
+    const id = isFirebase ? String(req.params.id) : Number(req.params.id);
     const email = (req.query.email || '').toString().toLowerCase();
-    const rows = all('SELECT documentId FROM acks WHERE batchId=? AND LOWER(email)=? AND acknowledged=1', [id, email]);
-    res.json({ ids: rows.map(r => String(r.documentId)) });
+    const maybeRows = all('SELECT documentId FROM acks WHERE batchId=? AND LOWER(email)=? AND acknowledged=1', [id, email]);
+    const rows = (maybeRows && typeof maybeRows.then === 'function') ? await maybeRows : (maybeRows || []);
+    res.json({ ids: (Array.isArray(rows) ? rows : []).map(r => String(r.documentId)) });
   });
 
   // Progress for a user in a batch
-  app.get('/api/batches/:id/progress', (req, res) => {
-    const id = Number(req.params.id);
+  app.get('/api/batches/:id/progress', async (req, res) => {
+    const isFirebase = (db && (db.driver === 'firebase' || db.driver === 'rtdb'));
+    const id = isFirebase ? String(req.params.id) : Number(req.params.id);
     const email = (req.query.email || '').toString().toLowerCase();
-    const totalRow = one('SELECT COUNT(*) as c FROM documents WHERE batchId=?', [id]);
-    const ackRow = one('SELECT COUNT(*) as c FROM acks WHERE batchId=? AND LOWER(email)=? AND acknowledged=1', [id, email]);
+    if (isFirebase) {
+      const docsMaybe = all('SELECT id FROM documents WHERE batchId=?', [id]);
+      const docs = (docsMaybe && typeof docsMaybe.then === 'function') ? await docsMaybe : (docsMaybe || []);
+      const acksMaybe = all('SELECT id FROM acks WHERE batchId=? AND LOWER(email)=? AND acknowledged=1', [id, email]);
+      const acks = (acksMaybe && typeof acksMaybe.then === 'function') ? await acksMaybe : (acksMaybe || []);
+      const total = Array.isArray(docs) ? docs.length : 0;
+      const acknowledged = Array.isArray(acks) ? acks.length : 0;
+      const percent = total === 0 ? 0 : Math.round((acknowledged / total) * 100);
+      return res.json({ acknowledged, total, percent });
+    }
+    const maybeTotal = one('SELECT COUNT(*) as c FROM documents WHERE batchId=?', [id]);
+    const totalRow = (maybeTotal && typeof maybeTotal.then === 'function') ? await maybeTotal : maybeTotal;
+    const maybeAck = one('SELECT COUNT(*) as c FROM acks WHERE batchId=? AND LOWER(email)=? AND acknowledged=1', [id, email]);
+    const ackRow = (maybeAck && typeof maybeAck.then === 'function') ? await maybeAck : maybeAck;
     const total = totalRow?.c || 0;
     const acknowledged = ackRow?.c || 0;
     const percent = total === 0 ? 0 : Math.round((acknowledged / total) * 100);
@@ -3000,7 +3559,7 @@ async function start() {
   });
 
   // Admin: create batch
-  app.post('/api/batches', (req, res) => {
+  app.post('/api/batches', async (req, res) => {
     const { logger } = req;
     
     try {
@@ -3046,36 +3605,49 @@ async function start() {
       
       logger.debug('batch-create', 'Executing SQL insert', { sql, params });
       
-      const ok = exec(sql, params);
-      if (!ok) {
-        logger.error('batch-create', 'Database insert failed', { sql, params });
-        return res.status(500).json({ error: 'insert_failed', message: 'Failed to insert batch into database' });
+      // Driver-aware insert and ID retrieval
+      let id;
+      if (db && (db.driver === 'firebase' || db.driver === 'rtdb')) {
+        try {
+          await db.run(sql, params);
+          const rows = await db.query('SELECT last_insert_rowid() as id');
+          id = Array.isArray(rows) && rows[0] ? rows[0].id : null;
+        } catch (e) {
+          logger.error('batch-create', 'Database insert failed (async driver)', { error: e?.message || String(e) });
+          return res.status(500).json({ error: 'insert_failed', message: 'Failed to insert batch into database' });
+        }
+      } else {
+        const ok = exec(sql, params);
+        if (!ok) {
+          logger.error('batch-create', 'Database insert failed', { sql, params });
+          return res.status(500).json({ error: 'insert_failed', message: 'Failed to insert batch into database' });
+        }
+        const idResult = one('SELECT last_insert_rowid() as id');
+        id = idResult?.id;
       }
-      
-      // Get the generated ID
-      const idResult = one('SELECT last_insert_rowid() as id');
-      const id = idResult?.id;
-      
+
       if (!id) {
         logger.error('batch-create', 'Failed to retrieve generated batch ID');
         return res.status(500).json({ error: 'id_retrieval_failed', message: 'Batch created but ID could not be retrieved' });
       }
-      
+
       // Verify batch exists and is accessible
-      const verifyBatch = one('SELECT id, name FROM batches WHERE id = ?', [id]);
-      if (!verifyBatch) {
-        logger.error('batch-create', 'Batch verification failed - batch not found after creation', { batchId: id });
-        return res.status(500).json({ error: 'verification_failed', message: 'Batch created but verification failed' });
+      {
+        const maybe = one('SELECT id, name FROM batches WHERE id = ?', [id]);
+        const verifyBatch = (maybe && typeof maybe.then === 'function') ? await maybe : maybe;
+        if (!verifyBatch) {
+          logger.error('batch-create', 'Batch verification failed - batch not found after creation', { batchId: id });
+          return res.status(500).json({ error: 'verification_failed', message: 'Batch created but verification failed' });
+        }
+        logger.info('batch-create', 'Batch created and verified successfully', {
+          batchId: id,
+          name: trimmedName,
+          startDate: finalStartDate,
+          dueDate: finalDueDate,
+          verifiedName: verifyBatch.name
+        });
       }
-      
-      logger.info('batch-create', 'Batch created and verified successfully', {
-        batchId: id,
-        name: trimmedName,
-        startDate: finalStartDate,
-        dueDate: finalDueDate,
-        verifiedName: verifyBatch.name
-      });
-      
+
       res.json({ id, batchId: id });
       
     } catch (error) {
@@ -3088,7 +3660,7 @@ async function start() {
   });
 
   // Admin: create batch WITH documents and recipients atomically
-  app.post('/api/batches/full', (req, res) => {
+  app.post('/api/batches/full', async (req, res) => {
     const { logger } = req;
     try {
       logger.info('batch-full-create', 'Starting full batch creation process');
@@ -3119,8 +3691,66 @@ async function start() {
         return res.status(400).json({ error: 'recipients_required', message: 'At least one recipient is required to create a batch' });
       }
 
-      // Begin transaction
+      // Begin transaction (noop for Firebase)
       logger.debug('batch-full-create', 'Beginning DB transaction');
+
+      // Support async flow for Firebase driver
+  if (db && (db.driver === 'firebase' || db.driver === 'rtdb')) {
+        let newBatchId = null;
+        let docsInserted = 0;
+        let recsInserted = 0;
+        try {
+          try { await db.run('BEGIN'); } catch {}
+          // Insert batch
+          await db.run('INSERT INTO batches (name, startDate, dueDate, status, description) VALUES (?, ?, ?, ?, ?)',
+            [trimmedName, finalStartDate, finalDueDate, finalStatus, finalDescription]);
+          const idRows = await db.query('SELECT last_insert_rowid() as id');
+          newBatchId = Array.isArray(idRows) && idRows[0] ? idRows[0].id : null;
+          if (!newBatchId) throw new Error('failed_to_create_batch');
+
+          // Insert documents
+          for (let i = 0; i < documents.length; i++) {
+            const d = documents[i] || {};
+            const { title, url, version = 1, requiresSignature = 0, driveId = null, itemId = null, source = null, localFileId = null, localUrl = null } = d;
+            if (!title || !url) continue;
+            await db.run('INSERT OR IGNORE INTO documents (batchId, title, url, version, requiresSignature, driveId, itemId, source, localFileId, localUrl) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+              [newBatchId, String(title), String(url), Number(version) || 1, requiresSignature ? 1 : 0, driveId, itemId, source, localFileId, localUrl]);
+            docsInserted++;
+          }
+
+          // Insert recipients
+          const processedEmails = new Set();
+          for (let i = 0; i < recipients.length; i++) {
+            const r = recipients[i] || {};
+            const { businessId = null, user = null, email = null, displayName = null, department = null, jobTitle = null, location = null, primaryGroup = null } = r;
+            const emailLower = String(email || user || '').trim().toLowerCase();
+            if (!emailLower || !emailLower.includes('@') || emailLower.length < 5) continue;
+            if (processedEmails.has(emailLower)) continue;
+            processedEmails.add(emailLower);
+            await db.run(`INSERT OR IGNORE INTO recipients (batchId, businessId, user, email, displayName, department, jobTitle, location, primaryGroup)
+                          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              [newBatchId, businessId, emailLower, emailLower, displayName, department, jobTitle, location, primaryGroup]);
+            recsInserted++;
+          }
+
+          if (docsInserted === 0) throw new Error('no_documents_created');
+          if (recsInserted === 0) throw new Error('no_recipients_created');
+
+          try { await db.run('COMMIT'); } catch {}
+          try { persist(db); } catch {}
+          logger.info('batch-full-create', 'Full batch creation successful', { batchId: newBatchId, docsInserted, recsInserted });
+          return res.json({ id: newBatchId, batchId: newBatchId, documentsInserted: docsInserted, recipientsInserted: recsInserted });
+        } catch (txErr) {
+          try { await db.run('ROLLBACK'); } catch {}
+          logger.error('batch-full-create', 'Transaction failed, rolled back', { error: txErr?.message || String(txErr) });
+          const code = (txErr?.message === 'no_documents_created') ? 400
+                    : (txErr?.message === 'no_recipients_created') ? 400
+                    : 500;
+          return res.status(code).json({ error: txErr?.message || 'tx_failed' });
+        }
+      }
+
+      // Default (SQLite/libsql) synchronous flow
       db.run('BEGIN');
       let newBatchId = null;
       let docsInserted = 0;
@@ -3183,12 +3813,15 @@ async function start() {
     }
   });
 
-  // Admin: update batch
-  app.put('/api/batches/:id', (req, res) => {
-    const id = Number(req.params.id);
+  // Admin: update batch (optionally add recipients)
+  app.put('/api/batches/:id', async (req, res) => {
+    const isFirebase = (db && (db.driver === 'firebase' || db.driver === 'rtdb'));
+    const id = isFirebase ? String(req.params.id) : Number(req.params.id);
     const { name, startDate = null, dueDate = null, status, description = null } = req.body || {};
+    const recList = Array.isArray(req.body?.recipients) ? req.body.recipients : [];
     try {
-      const current = one('SELECT id, name, startDate, dueDate, status, description FROM batches WHERE id=?', [id]);
+      const maybeCur = one('SELECT id, name, startDate, dueDate, status, description FROM batches WHERE id=?', [id]);
+      const current = (maybeCur && typeof maybeCur.then === 'function') ? await maybeCur : maybeCur;
       if (!current) return res.status(404).json({ error: 'not_found' });
       const next = {
         name: name != null ? String(name).trim() : current.name,
@@ -3197,9 +3830,35 @@ async function start() {
         status: status != null ? Number(status) : current.status,
         description: description !== undefined ? description : current.description
       };
-      db.run('UPDATE batches SET name=?, startDate=?, dueDate=?, status=?, description=? WHERE id=?', [next.name, next.startDate, next.dueDate, next.status, next.description, id]);
-      persist(db);
-      res.json({ ok: true });
+      await db.run('UPDATE batches SET name=?, startDate=?, dueDate=?, status=?, description=? WHERE id=?', [next.name, next.startDate, next.dueDate, next.status, next.description, id]);
+
+      // Optional recipients addition
+      let recipientsInserted = 0;
+      if (recList.length > 0) {
+        const processed = new Set();
+        for (let i = 0; i < recList.length; i++) {
+          const r = recList[i] || {};
+          const { businessId = null, user = null, email = null, displayName = null, department = null, jobTitle = null, location = null, primaryGroup = null } = r;
+          const emailLower = String(email || user || '').trim().toLowerCase();
+          if (!emailLower || !emailLower.includes('@') || emailLower.length < 5) continue;
+          if (processed.has(emailLower)) continue; processed.add(emailLower);
+          try {
+            if (isFirebase) {
+              const maybeExists = one('SELECT id FROM recipients WHERE batchId=? AND LOWER(email)=LOWER(?)', [id, emailLower]);
+              const exists = (maybeExists && typeof maybeExists.then === 'function') ? await maybeExists : maybeExists;
+              if (exists) continue;
+              await db.run(`INSERT OR IGNORE INTO recipients (batchId, businessId, user, email, displayName, department, jobTitle, location, primaryGroup)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, [id, businessId, emailLower, emailLower, displayName, department, jobTitle, location, primaryGroup]);
+            } else {
+              db.run(`INSERT OR IGNORE INTO recipients (batchId, businessId, user, email, displayName, department, jobTitle, location, primaryGroup)
+                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, [id, businessId, emailLower, emailLower, displayName, department, jobTitle, location, primaryGroup]);
+            }
+            recipientsInserted++;
+          } catch {}
+        }
+      }
+      try { persist(db); } catch {}
+      res.json({ ok: true, recipientsInserted });
     } catch (e) {
       console.error('Update batch failed', e);
       res.status(500).json({ error: 'update_failed' });
@@ -3207,20 +3866,28 @@ async function start() {
   });
 
   // Admin: bulk add documents
-  app.post('/api/batches/:id/documents', (req, res) => {
+  app.post('/api/batches/:id/documents', async (req, res) => {
     const { logger } = req;
     
     try {
       logger.info('documents-create', 'Starting bulk document addition process');
       
-      const id = Number(req.params.id);
-      if (!Number.isInteger(id) || id <= 0) {
-        logger.error('documents-create', 'Invalid batch ID provided', { providedId: req.params.id, parsedId: id });
-        return res.status(400).json({ error: 'invalid_batch_id', message: 'Batch ID must be a positive integer' });
+  const id = (db && (db.driver === 'firebase' || db.driver === 'rtdb')) ? String(req.params.id) : Number(req.params.id);
+  if ((db && (db.driver === 'firebase' || db.driver === 'rtdb'))) {
+        if (!id || typeof id !== 'string') {
+          logger.error('documents-create', 'Invalid batch ID provided (firebase)', { providedId: req.params.id });
+          return res.status(400).json({ error: 'invalid_batch_id', message: 'Batch ID must be a non-empty string' });
+        }
+      } else {
+        if (!Number.isInteger(id) || id <= 0) {
+          logger.error('documents-create', 'Invalid batch ID provided', { providedId: req.params.id, parsedId: id });
+          return res.status(400).json({ error: 'invalid_batch_id', message: 'Batch ID must be a positive integer' });
+        }
       }
       
       // Check if batch exists
-      const batchExists = one('SELECT id, name FROM batches WHERE id = ?', [id]);
+      const maybeBatch = one('SELECT id, name FROM batches WHERE id = ?', [id]);
+      const batchExists = (maybeBatch && typeof maybeBatch.then === 'function') ? await maybeBatch : maybeBatch;
       if (!batchExists) {
         logger.error('documents-create', 'Batch not found', { batchId: id });
         return res.status(404).json({ error: 'batch_not_found', message: 'Specified batch does not exist' });
@@ -3247,7 +3914,7 @@ async function start() {
       const errors = [];
       
       logger.debug('documents-create', 'Starting database transaction');
-      db.run('BEGIN');
+  db.run('BEGIN');
       
       try {
         for (let i = 0; i < docs.length; i++) {
@@ -3285,8 +3952,13 @@ async function start() {
           });
           
           try {
-            db.run('INSERT OR IGNORE INTO documents (batchId, title, url, version, requiresSignature, driveId, itemId, source, localFileId, localUrl) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', 
-              [id, String(title), String(url), Number(version) || 1, requiresSignature ? 1 : 0, driveId, itemId, source, localFileId, localUrl]);
+            if (db && (db.driver === 'firebase' || db.driver === 'rtdb')) {
+              await db.run('INSERT OR IGNORE INTO documents (batchId, title, url, version, requiresSignature, driveId, itemId, source, localFileId, localUrl) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', 
+                [id, String(title), String(url), Number(version) || 1, requiresSignature ? 1 : 0, driveId, itemId, source, localFileId, localUrl]);
+            } else {
+              db.run('INSERT OR IGNORE INTO documents (batchId, title, url, version, requiresSignature, driveId, itemId, source, localFileId, localUrl) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', 
+                [id, String(title), String(url), Number(version) || 1, requiresSignature ? 1 : 0, driveId, itemId, source, localFileId, localUrl]);
+            }
             count++;
           } catch (docError) {
             logger.error('documents-create', `Failed to insert document ${i + 1}`, {
@@ -3300,7 +3972,7 @@ async function start() {
         }
         
         logger.debug('documents-create', 'Committing database transaction');
-        db.run('COMMIT');
+  db.run('COMMIT');
         persist(db);
         
         logger.info('documents-create', 'Document addition completed', {
@@ -3324,7 +3996,7 @@ async function start() {
           batchId: id,
           processedCount: count
         });
-        db.run('ROLLBACK');
+  db.run('ROLLBACK');
         throw transactionError;
       }
       
@@ -3350,11 +4022,12 @@ async function start() {
   // DELETE /api/batches/:id/documents
   // Body: { ids?: number[], urls?: string[] }
   // Also supports single query params: ?docId=123 or ?url=...
-  app.delete('/api/batches/:id/documents', (req, res) => {
+  app.delete('/api/batches/:id/documents', async (req, res) => {
     try {
       const logger = req && req.logger ? req.logger : null;
-      const batchId = Number(req.params.id);
-      if (!Number.isInteger(batchId) || batchId <= 0) {
+      const isFirebase = (db && (db.driver === 'firebase' || db.driver === 'rtdb'));
+      const batchId = isFirebase ? String(req.params.id) : Number(req.params.id);
+      if ((isFirebase && (!batchId || typeof batchId !== 'string')) || (!isFirebase && (!Number.isInteger(batchId) || batchId <= 0))) {
         return res.status(400).json({ error: 'invalid_batch_id' });
       }
       const body = req.body || {};
@@ -3373,13 +4046,15 @@ async function start() {
       }
 
       let removed = 0;
-      db.run('BEGIN');
+      await db.run('BEGIN');
       try {
         for (const id of ids) {
           try {
-            const before = one('SELECT COUNT(*) as c FROM documents WHERE batchId=? AND id=?', [batchId, id])?.c || 0;
-            db.run('DELETE FROM documents WHERE batchId=? AND id=?', [batchId, id]);
-            const after = one('SELECT COUNT(*) as c FROM documents WHERE batchId=? AND id=?', [batchId, id])?.c || 0;
+            const maybeBefore = one('SELECT COUNT(*) as c FROM documents WHERE batchId=? AND id=?', [batchId, id]);
+            const before = (maybeBefore && typeof maybeBefore.then === 'function') ? (await maybeBefore)?.c || 0 : (maybeBefore?.c || 0);
+            await db.run('DELETE FROM documents WHERE batchId=? AND id=?', [batchId, id]);
+            const maybeAfter = one('SELECT COUNT(*) as c FROM documents WHERE batchId=? AND id=?', [batchId, id]);
+            const after = (maybeAfter && typeof maybeAfter.then === 'function') ? (await maybeAfter)?.c || 0 : (maybeAfter?.c || 0);
             const delta = Math.max(0, Number(before) - Number(after));
             removed += delta;
             try { (logger && logger.debug) ? logger.debug('documents-delete:by-id', { id, before, after, delta }) : console.log('[documents-delete:by-id]', { id, before, after, delta }); } catch {}
@@ -3403,16 +4078,20 @@ async function start() {
 
           // Try exact matches first (canonical url and local server url)
           try {
-            const beforeUrl = one('SELECT COUNT(*) as c FROM documents WHERE batchId=? AND url=?', [batchId, raw])?.c || 0;
-            db.run('DELETE FROM documents WHERE batchId=? AND url=?', [batchId, raw]);
-            const afterUrl = one('SELECT COUNT(*) as c FROM documents WHERE batchId=? AND url=?', [batchId, raw])?.c || 0;
+            const maybeBU = one('SELECT COUNT(*) as c FROM documents WHERE batchId=? AND url=?', [batchId, raw]);
+            const beforeUrl = (maybeBU && typeof maybeBU.then === 'function') ? (await maybeBU)?.c || 0 : (maybeBU?.c || 0);
+            await db.run('DELETE FROM documents WHERE batchId=? AND url=?', [batchId, raw]);
+            const maybeAU = one('SELECT COUNT(*) as c FROM documents WHERE batchId=? AND url=?', [batchId, raw]);
+            const afterUrl = (maybeAU && typeof maybeAU.then === 'function') ? (await maybeAU)?.c || 0 : (maybeAU?.c || 0);
             const deltaUrl = Math.max(0, Number(beforeUrl) - Number(afterUrl));
             urlRemoved += deltaUrl;
           } catch {}
           try {
-            const beforeLocal = one('SELECT COUNT(*) as c FROM documents WHERE batchId=? AND localUrl=?', [batchId, raw])?.c || 0;
-            db.run('DELETE FROM documents WHERE batchId=? AND localUrl=?', [batchId, raw]);
-            const afterLocal = one('SELECT COUNT(*) as c FROM documents WHERE batchId=? AND localUrl=?', [batchId, raw])?.c || 0;
+            const maybeBL = one('SELECT COUNT(*) as c FROM documents WHERE batchId=? AND localUrl=?', [batchId, raw]);
+            const beforeLocal = (maybeBL && typeof maybeBL.then === 'function') ? (await maybeBL)?.c || 0 : (maybeBL?.c || 0);
+            await db.run('DELETE FROM documents WHERE batchId=? AND localUrl=?', [batchId, raw]);
+            const maybeAL = one('SELECT COUNT(*) as c FROM documents WHERE batchId=? AND localUrl=?', [batchId, raw]);
+            const afterLocal = (maybeAL && typeof maybeAL.then === 'function') ? (await maybeAL)?.c || 0 : (maybeAL?.c || 0);
             const deltaLocal = Math.max(0, Number(beforeLocal) - Number(afterLocal));
             urlRemoved += deltaLocal;
           } catch {}
@@ -3420,16 +4099,20 @@ async function start() {
           // Then try normalized variants (helps when clients passed ?download=1, hashes, or trailing slash)
           if (normalized && normalized !== raw) {
             try {
-              const beforeUrlN = one('SELECT COUNT(*) as c FROM documents WHERE batchId=? AND url=?', [batchId, normalized])?.c || 0;
-              db.run('DELETE FROM documents WHERE batchId=? AND url=?', [batchId, normalized]);
-              const afterUrlN = one('SELECT COUNT(*) as c FROM documents WHERE batchId=? AND url=?', [batchId, normalized])?.c || 0;
+              const maybeBUN = one('SELECT COUNT(*) as c FROM documents WHERE batchId=? AND url=?', [batchId, normalized]);
+              const beforeUrlN = (maybeBUN && typeof maybeBUN.then === 'function') ? (await maybeBUN)?.c || 0 : (maybeBUN?.c || 0);
+              await db.run('DELETE FROM documents WHERE batchId=? AND url=?', [batchId, normalized]);
+              const maybeAUN = one('SELECT COUNT(*) as c FROM documents WHERE batchId=? AND url=?', [batchId, normalized]);
+              const afterUrlN = (maybeAUN && typeof maybeAUN.then === 'function') ? (await maybeAUN)?.c || 0 : (maybeAUN?.c || 0);
               const deltaUrlN = Math.max(0, Number(beforeUrlN) - Number(afterUrlN));
               urlRemoved += deltaUrlN;
             } catch {}
             try {
-              const beforeLocalN = one('SELECT COUNT(*) as c FROM documents WHERE batchId=? AND localUrl=?', [batchId, normalized])?.c || 0;
-              db.run('DELETE FROM documents WHERE batchId=? AND localUrl=?', [batchId, normalized]);
-              const afterLocalN = one('SELECT COUNT(*) as c FROM documents WHERE batchId=? AND localUrl=?', [batchId, normalized])?.c || 0;
+              const maybeBLN = one('SELECT COUNT(*) as c FROM documents WHERE batchId=? AND localUrl=?', [batchId, normalized]);
+              const beforeLocalN = (maybeBLN && typeof maybeBLN.then === 'function') ? (await maybeBLN)?.c || 0 : (maybeBLN?.c || 0);
+              await db.run('DELETE FROM documents WHERE batchId=? AND localUrl=?', [batchId, normalized]);
+              const maybeALN = one('SELECT COUNT(*) as c FROM documents WHERE batchId=? AND localUrl=?', [batchId, normalized]);
+              const afterLocalN = (maybeALN && typeof maybeALN.then === 'function') ? (await maybeALN)?.c || 0 : (maybeALN?.c || 0);
               const deltaLocalN = Math.max(0, Number(beforeLocalN) - Number(afterLocalN));
               urlRemoved += deltaLocalN;
             } catch {}
@@ -3438,10 +4121,10 @@ async function start() {
           removed += urlRemoved;
           try { (logger && logger.debug) ? logger.debug('documents-delete:by-url', { raw, normalized, delta: urlRemoved }) : console.log('[documents-delete:by-url]', { raw, normalized, delta: urlRemoved }); } catch {}
         }
-        db.run('COMMIT');
-        persist(db);
+        await db.run('COMMIT');
+        try { persist(db); } catch {}
       } catch (e) {
-        try { db.run('ROLLBACK'); } catch {}
+        try { await db.run('ROLLBACK'); } catch {}
         try { (logger && logger.error) ? logger.error('documents-delete:tx-error', { error: String(e?.message || e) }) : console.error('[documents-delete:tx-error]', e); } catch {}
         return res.status(500).json({ error: 'delete_failed', details: e?.message || String(e) });
       }
@@ -3457,20 +4140,28 @@ async function start() {
   });
 
   // Admin: bulk add recipients
-  app.post('/api/batches/:id/recipients', (req, res) => {
+  app.post('/api/batches/:id/recipients', async (req, res) => {
     const { logger } = req;
     
     try {
       logger.info('recipients-create', 'Starting bulk recipient addition process');
       
-      const id = Number(req.params.id);
-      if (!Number.isInteger(id) || id <= 0) {
-        logger.error('recipients-create', 'Invalid batch ID provided', { providedId: req.params.id, parsedId: id });
-        return res.status(400).json({ error: 'invalid_batch_id', message: 'Batch ID must be a positive integer' });
+  const id = (db && (db.driver === 'firebase' || db.driver === 'rtdb')) ? String(req.params.id) : Number(req.params.id);
+  if ((db && (db.driver === 'firebase' || db.driver === 'rtdb'))) {
+        if (!id || typeof id !== 'string') {
+          logger.error('recipients-create', 'Invalid batch ID provided (firebase)', { providedId: req.params.id });
+          return res.status(400).json({ error: 'invalid_batch_id', message: 'Batch ID must be a non-empty string' });
+        }
+      } else {
+        if (!Number.isInteger(id) || id <= 0) {
+          logger.error('recipients-create', 'Invalid batch ID provided', { providedId: req.params.id, parsedId: id });
+          return res.status(400).json({ error: 'invalid_batch_id', message: 'Batch ID must be a positive integer' });
+        }
       }
       
       // Check if batch exists
-      const batchExists = one('SELECT id, name FROM batches WHERE id = ?', [id]);
+      const maybeBatch = one('SELECT id, name FROM batches WHERE id = ?', [id]);
+      const batchExists = (maybeBatch && typeof maybeBatch.then === 'function') ? await maybeBatch : maybeBatch;
       if (!batchExists) {
         logger.error('recipients-create', 'Batch not found', { batchId: id });
         return res.status(404).json({ error: 'batch_not_found', message: 'Specified batch does not exist' });
@@ -3552,9 +4243,15 @@ async function start() {
           });
           
           try {
-            db.run(`INSERT OR IGNORE INTO recipients (batchId, businessId, user, email, displayName, department, jobTitle, location, primaryGroup)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, 
-                    [id, businessId, emailLower, emailLower, displayName, department, jobTitle, location, primaryGroup]);
+            if (db && (db.driver === 'firebase' || db.driver === 'rtdb')) {
+              await db.run(`INSERT OR IGNORE INTO recipients (batchId, businessId, user, email, displayName, department, jobTitle, location, primaryGroup)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, 
+                            [id, businessId, emailLower, emailLower, displayName, department, jobTitle, location, primaryGroup]);
+            } else {
+              db.run(`INSERT OR IGNORE INTO recipients (batchId, businessId, user, email, displayName, department, jobTitle, location, primaryGroup)
+                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, 
+                      [id, businessId, emailLower, emailLower, displayName, department, jobTitle, location, primaryGroup]);
+            }
             count++;
           } catch (recipientError) {
             logger.error('recipients-create', `Failed to insert recipient ${i + 1}`, {
@@ -3615,19 +4312,20 @@ async function start() {
   });
 
   // Admin: delete batch (cascade delete related data)
-  app.delete('/api/batches/:id', (req, res) => {
-    const id = Number(req.params.id);
+  app.delete('/api/batches/:id', async (req, res) => {
+    const isFirebase = (db && (db.driver === 'firebase' || db.driver === 'rtdb'));
+    const id = isFirebase ? String(req.params.id) : Number(req.params.id);
     try {
-      db.run('BEGIN');
-      db.run('DELETE FROM acks WHERE batchId=?', [id]);
-      db.run('DELETE FROM documents WHERE batchId=?', [id]);
-      db.run('DELETE FROM recipients WHERE batchId=?', [id]);
-      db.run('DELETE FROM batches WHERE id=?', [id]);
-      db.run('COMMIT');
-      persist(db);
+      await db.run('BEGIN');
+      await db.run('DELETE FROM acks WHERE batchId=?', [id]);
+      await db.run('DELETE FROM documents WHERE batchId=?', [id]);
+      await db.run('DELETE FROM recipients WHERE batchId=?', [id]);
+      await db.run('DELETE FROM batches WHERE id=?', [id]);
+      await db.run('COMMIT');
+      try { persist(db); } catch {}
       res.json({ ok: true });
     } catch (e) {
-      try { db.run('ROLLBACK'); } catch {}
+      try { await db.run('ROLLBACK'); } catch {}
       console.error('Delete batch failed', e);
       res.status(500).json({ error: 'delete_failed' });
     }
@@ -3635,17 +4333,18 @@ async function start() {
 
   // Roles management API
   // List roles
-  app.get('/api/roles', (_req, res) => {
+  app.get('/api/roles', async (_req, res) => {
     try {
-      const rows = all('SELECT id, email, role, createdAt FROM roles ORDER BY role, LOWER(email)');
-      res.json(rows.map(r => ({ id: r.id, email: String(r.email).toLowerCase(), role: String(r.role), createdAt: r.createdAt })));
+      const maybe = all('SELECT id, email, role, createdAt FROM roles ORDER BY role, LOWER(email)');
+      const rows = (maybe && typeof maybe.then === 'function') ? await maybe : (maybe || []);
+      res.json((Array.isArray(rows) ? rows : []).map(r => ({ id: r.id, email: String(r.email).toLowerCase(), role: String(r.role), createdAt: r.createdAt })));
     } catch (e) {
       console.error('List roles failed', e);
       res.status(500).json({ error: 'list_failed' });
     }
   });
   // Create role
-  app.post('/api/roles', (req, res) => {
+  app.post('/api/roles', async (req, res) => {
     try {
       const { email, role } = req.body || {};
       const e = String(email || '').trim().toLowerCase();
@@ -3654,9 +4353,15 @@ async function start() {
       // Allow only Admin or Manager via API to avoid accidental grant of SuperAdmin; env remains authoritative for SuperAdmin
       if (!['Admin','Manager'].includes(r)) return res.status(400).json({ error: 'invalid_role' });
       const now = new Date().toISOString();
-      const ok = exec('INSERT OR IGNORE INTO roles (email, role, createdAt) VALUES (?, ?, ?)', [e, r, now]);
-      if (!ok) return res.status(400).json({ error: 'insert_failed' });
-      const id = one('SELECT last_insert_rowid() as id')?.id;
+      if (db && (db.driver === 'firebase' || db.driver === 'rtdb')) {
+        await db.run('INSERT OR IGNORE INTO roles (email, role, createdAt) VALUES (?, ?, ?)', [e, r, now]);
+      } else {
+        const ok = exec('INSERT OR IGNORE INTO roles (email, role, createdAt) VALUES (?, ?, ?)', [e, r, now]);
+        if (!ok) return res.status(400).json({ error: 'insert_failed' });
+      }
+      const maybeId = one('SELECT last_insert_rowid() as id');
+      const idRow = (maybeId && typeof maybeId.then === 'function') ? await maybeId : maybeId;
+      const id = idRow?.id;
       res.json({ id, email: e, role: r, createdAt: now });
     } catch (e) {
       console.error('Create role failed', e);
@@ -3664,12 +4369,17 @@ async function start() {
     }
   });
   // Delete role
-  app.delete('/api/roles/:id', (req, res) => {
+  app.delete('/api/roles/:id', async (req, res) => {
     try {
-      const id = Number(req.params.id);
-      if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'invalid_id' });
-      const ok = exec('DELETE FROM roles WHERE id=?', [id]);
-      if (!ok) return res.status(400).json({ error: 'delete_failed' });
+      const isFirebase = (db && (db.driver === 'firebase' || db.driver === 'rtdb'));
+      const id = isFirebase ? String(req.params.id) : Number(req.params.id);
+      if ((!isFirebase && (!Number.isInteger(id) || id <= 0)) || (isFirebase && !id)) return res.status(400).json({ error: 'invalid_id' });
+      if (isFirebase) {
+        await db.run('DELETE FROM roles WHERE id=?', [id]);
+      } else {
+        const ok = exec('DELETE FROM roles WHERE id=?', [id]);
+        if (!ok) return res.status(400).json({ error: 'delete_failed' });
+      }
       res.json({ ok: true });
     } catch (e) {
       console.error('Delete role failed', e);
@@ -3678,15 +4388,29 @@ async function start() {
   });
 
   // Acknowledge a document
-  app.post('/api/ack', (req, res) => {
+  app.post('/api/ack', async (req, res) => {
+    const isFirebase = (db && (db.driver === 'firebase' || db.driver === 'rtdb'));
     const { batchId, documentId, email } = req.body || {};
     if (!batchId || !documentId || !email) return res.status(400).json({ error: 'missing_fields' });
-    // Idempotent: delete existing then insert
-    db.run('DELETE FROM acks WHERE batchId=? AND documentId=? AND LOWER(email)=?', [batchId, documentId, String(email).toLowerCase()]);
-    const now = new Date().toISOString();
-    const ok = exec('INSERT INTO acks (batchId, documentId, email, acknowledged, ackDate) VALUES (?, ?, ?, 1, ?)', [batchId, documentId, String(email).toLowerCase(), now]);
-    if (!ok) return res.status(400).json({ error: 'insert_failed' });
-    res.json({ ok: true });
+    const e = String(email).toLowerCase();
+    try {
+      if (isFirebase) {
+        await db.run('DELETE FROM acks WHERE batchId=? AND documentId=? AND LOWER(email)=?', [String(batchId), String(documentId), e]);
+        const now = new Date().toISOString();
+        await db.run('INSERT INTO acks (batchId, documentId, email, acknowledged, ackDate) VALUES (?, ?, ?, 1, ?)', [String(batchId), String(documentId), e, now]);
+        try { persist(db); } catch {}
+        return res.json({ ok: true });
+      } else {
+        // Idempotent: delete existing then insert
+        db.run('DELETE FROM acks WHERE batchId=? AND documentId=? AND LOWER(email)=?', [Number(batchId), Number(documentId), e]);
+        const now = new Date().toISOString();
+        const ok = exec('INSERT INTO acks (batchId, documentId, email, acknowledged, ackDate) VALUES (?, ?, ?, 1, ?)', [Number(batchId), Number(documentId), e, now]);
+        if (!ok) return res.status(400).json({ error: 'insert_failed' });
+        return res.json({ ok: true });
+      }
+    } catch (err) {
+      return res.status(500).json({ error: 'insert_failed', details: err?.message || String(err) });
+    }
   });
 
   // Seed sample data for a specific user email
@@ -3739,7 +4463,7 @@ if (!IS_SERVERLESS && require.main === module) {
     try {
       const app = await getApp();
       app.listen(PORT, () => {
-        console.log(`SQLite API listening on http://localhost:${PORT}`);
+        console.log(`API listening on http://localhost:${PORT}`);
       });
     } catch (err) {
       console.error('Failed to start server:', err);
@@ -4080,8 +4804,15 @@ function bootstrapSchema(db) {
   db.run(`CREATE INDEX IF NOT EXISTS idx_consents_tenant ON consents(tenant_id);`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_consents_batch ON consents(batch_id);`);
 
-  // Seed a default business for convenience
-  db.run("INSERT INTO businesses (name, code, isActive, description) VALUES ('Default Business', 'DEF', 1, 'Auto-created')");
+  // Optional seed: default business (only when AUTO_SEED_DEFAULT_BUSINESS=1)
+  try {
+    if (String(process.env.AUTO_SEED_DEFAULT_BUSINESS || '').trim() === '1') {
+      const c = (db.query && db.query('SELECT COUNT(*) as c FROM businesses')[0]?.c) || 0;
+      if (Number(c) === 0) {
+        db.run('INSERT INTO businesses (name, code, isActive, description) VALUES (?, ?, ?, ?)', ['Default Business', 'DEF', 1, 'Auto-created']);
+      }
+    }
+  } catch {}
   try { db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('external_support_enabled','0')"); } catch {}
   // Seed an owner tenant if none
   try {

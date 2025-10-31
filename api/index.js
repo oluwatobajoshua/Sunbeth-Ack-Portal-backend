@@ -3,11 +3,19 @@
 let cachedApp = null;
 
 module.exports = async (req, res) => {
-	if (!cachedApp) {
-		const getApp = require('..');
-		cachedApp = await getApp();
+	try {
+		if (!cachedApp) {
+			const getApp = require('..');
+			cachedApp = await getApp();
+		}
+		return cachedApp(req, res);
+	} catch (e) {
+		try {
+			res.statusCode = 500;
+			res.setHeader('Content-Type', 'application/json');
+			res.end(JSON.stringify({ error: 'init_failed', message: e?.message || String(e), stack: (e && e.stack) ? String(e.stack).split('\n').slice(0,5) : undefined }));
+		} catch {}
 	}
-	return cachedApp(req, res);
 };
 
 // For completeness if some environments look for named handler

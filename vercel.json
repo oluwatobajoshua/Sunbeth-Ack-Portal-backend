@@ -2,10 +2,12 @@
   "version": 2,
   "functions": {
     "api/index.js": {
-      "includeFiles": "{node_modules/sql.js/dist/sql-wasm.wasm,openapi.yaml,data/sunbeth.db}"
+      "includeFiles": "node_modules/sql.js/dist/sql-wasm.wasm"
     }
   },
   "routes": [
+    { "src": "/api/health", "dest": "/api/health.js" },
+    { "src": "/api/diag/sqljs", "dest": "/api/diag-sqljs.js" },
     { "src": "/api/(.*)", "dest": "/api/index.js" }
   ]
 }

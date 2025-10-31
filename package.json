@@ -10,12 +10,18 @@
   "scripts": {
     "start": "node index.js",
     "dev": "node index.js",
+    "win:status": "powershell -NoProfile -ExecutionPolicy Bypass -File ..\\scripts\\manage-backend.ps1 -Action Status",
+    "win:start": "powershell -NoProfile -ExecutionPolicy Bypass -File ..\\scripts\\manage-backend.ps1 -Action Start",
+    "win:stop": "powershell -NoProfile -ExecutionPolicy Bypass -File ..\\scripts\\manage-backend.ps1 -Action Stop",
+    "win:restart": "powershell -NoProfile -ExecutionPolicy Bypass -File ..\\scripts\\manage-backend.ps1 -Action Restart",
+    "seed:rtdb": "node ./scripts/seed-rtdb.mjs",
     "lint": "eslint . --ext .js",
     "lint:fix": "eslint . --ext .js --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test:int": "node --test .\\tests\\*.test.mjs",
-    "test:e2e": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\tests\\smoke-e2e.ps1"
+    "test:e2e": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\tests\\smoke-e2e.ps1",
+    "test:e2e:all": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\tests\\e2e-all.ps1"
   },
   "dependencies": {
     "@libsql/client": "^0.10.0",
@@ -30,6 +36,7 @@
     "dotenv": "^17.2.3",
     "express": "^4.19.2",
     "express-rate-limit": "^7.4.0",
+    "firebase-admin": "^12.6.0",
     "helmet": "^7.1.0",
     "https-proxy-agent": "^7.0.2",
     "mime-types": "^2.1.35",
@@ -40,6 +47,7 @@
     "pg": "^8.16.3",
     "serverless-http": "^3.2.0",
     "sql.js": "^1.11.0",
+    "sunbeth-ack-portal-root": "file:..",
     "swagger-ui-express": "^5.0.1",
     "xlsx": "^0.18.5",
     "yamljs": "^0.3.0"

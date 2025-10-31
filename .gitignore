@@ -115,3 +115,6 @@ Thumbs.db
 uploads/
 temp-files/
 .vercel
+
+# Secrets (do not commit service accounts)
+data/serviceAccount.json

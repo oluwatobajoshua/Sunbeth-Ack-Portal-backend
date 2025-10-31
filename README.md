@@ -127,6 +127,7 @@ The server can be configured through environment variables or by modifying the c
 - **Port**: Default 4000 (configurable via `PORT` env var)
 - **Database Driver**: Select with `DB_DRIVER` (default `sqlite`)
    - `sqlite` uses sql.js + file at `./data/sunbeth.db`
+   - `firebase` for Firestore and `rtdb` for Firebase Realtime Database (see Production notes below)
    - Placeholders exist for `postgres`, `mysql`, `mssql` (add adapters in `src/db/adapter.js`)
 - **CORS**: Enabled for frontend integration
 
@@ -147,25 +148,42 @@ npm start
 ```
 
 ### Production Deployment
-The application can be deployed to:
-- **Heroku**
-- **AWS Lambda** (with serverless framework)
-- **Azure App Service**
-- **DigitalOcean Droplets**
-- **Traditional VPS**
+We deploy this backend to Vercel’s serverless platform.
 
 ### Environment Variables
 - `PORT` - Server port (default: 4000)
 - `NODE_ENV` - Environment (development/production)
-- `DB_DRIVER` - Database driver (default: `sqlite`)
+- `DB_DRIVER` - Database driver (`sqlite`, `firebase`, `rtdb`, `libsql`, `turso`)
+
+### Using Firebase RTDB on Vercel (Production)
+When running with `DB_DRIVER=rtdb`, the backend uses the Firebase Admin SDK against your Realtime Database. Configure these environment variables in your Vercel Project (Settings → Environment Variables):
+
+- `DB_DRIVER` = `rtdb`
+- `FIREBASE_PROJECT_ID` = your Firebase project id (e.g. `sunbeth-ack-portal`)
+- `FIREBASE_DATABASE_URL` = your RTDB URL (e.g. `https://<project-id>-default-rtdb.firebaseio.com/`)
+- One of the following for credentials:
+   - `FIREBASE_SERVICE_ACCOUNT_JSON` = the service account JSON, either pasted directly as raw JSON or base64-encoded
+   - OR `FIREBASE_SERVICE_ACCOUNT_PATH` = path to a JSON file in the deployed filesystem (not recommended on Vercel)
+
+Notes:
+- The code automatically detects base64 vs raw JSON in `FIREBASE_SERVICE_ACCOUNT_JSON`.
+- Don’t commit service account keys to the repo. A sample is provided at `data/serviceAccount.example.json`. The actual `data/serviceAccount.json` is git-ignored.
+- Firestore support is also available with `DB_DRIVER=firebase` using the same credentials variables.
+
+Verify after deploy:
+- Call `GET /api/health` → should return `{ ok: true }`.
+- Call `GET /api/diag/db` → should return `{ driver: "rtdb", canary: { ok: 1 } }`.
+- Library and proxy endpoints should continue to function unchanged (`/api/library/list`, `/api/proxy`).
 
 ## 🔄 Database Management
 
-The SQLite database is file-based and included in the `data/` directory. For production:
+The SQLite database is file-based and included in the `data/` directory. For local dev:
 
-1. **Backup Strategy**: Regular database backups are recommended
-2. **Migration**: Database schema changes should be handled carefully
-3. **Performance**: Consider indexing for large datasets
+For production on Vercel, prefer a cloud database (e.g., Firebase RTDB with `DB_DRIVER=rtdb`) instead of SQLite, since serverless filesystems are ephemeral. If you do use SQLite, bundle `sql-wasm.wasm` as configured in `vercel.json`.
+
+1. Backup Strategy: If using SQLite locally, take regular backups of `data/`.
+2. Migration: Database schema changes should be handled carefully.
+3. Performance: Consider indexing or switching to a managed database for larger datasets.
 
 ## 🤝 Contributing
 
