@@ -1454,3 +1454,678 @@ recent activity failed TypeError: all(...).map is not a function
 [2025-10-31T07:26:33.667Z] [ERROR] [55n86mpgomhej58sh] response: GET /api/activity/recent?limit=20 - 500 { duration: '2ms', status: 500 }
 [2025-10-31T07:27:28.501Z] [ERROR] [21veup9yymhej6f3o] response: GET /acks/export?year=2025&adminEmail=oluwatoba.ogunsakin%40sunbeth.net - 403 { duration: '1ms', status: 403 }
 [2025-10-31T07:27:28.511Z] [ERROR] [fn3gemjo6mhej6f3y] response: GET /consents/export?since=2025-01-01T00%3A00%3A00.000Z&adminEmail=oluwatoba.ogunsakin%40sunbeth.net - 403 { duration: '1ms', status: 403 }
+[2025-10-31T07:29:11.458Z] [ERROR] [kaw84adn1mhej8mix] response: GET /api/theme/effective - 500 { duration: '25ms', status: 500 }
+[2025-10-31T07:29:11.549Z] [ERROR] [t7y0dqi0lmhej8mm0] response: GET /api/theme/effective - 500 { duration: '5ms', status: 500 }
+[2025-10-31T07:29:11.555Z] [ERROR] [2ao3v4jkimhej8mm8] response: GET /api/theme/effective - 500 { duration: '3ms', status: 500 }
+[2025-10-31T07:29:11.594Z] [ERROR] [w9qrnq4mimhej8mn6] response: GET /api/theme/effective - 500 { duration: '8ms', status: 500 }
+effective perms failed TypeError: roleRows is not iterable
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:2016:23
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:119:3)
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:284:15
+    at Function.process_params (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:346:12)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:280:10)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:534:5
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+[2025-10-31T07:29:11.626Z] [ERROR] [sbhssoaaomhej8mnv] response: GET /api/rbac/effective?email=oluwatoba.ogunsakin%40sunbeth.net - 500 { duration: '14ms', status: 500 }
+effective perms failed TypeError: roleRows is not iterable
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:2016:23
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:119:3)
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:284:15
+    at Function.process_params (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:346:12)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:280:10)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:534:5
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+[2025-10-31T07:29:13.281Z] [ERROR] [rv51gmta0mhej8ny7] response: GET /api/rbac/effective?email=oluwatoba.ogunsakin%40sunbeth.net - 500 { duration: '2ms', status: 500 }
+[2025-10-31T07:29:15.137Z] [ERROR] [1creqvd8pmhej8pds] response: GET /api/theme/effective?module=admin - 500 { duration: '1ms', status: 500 }
+recent activity failed TypeError: all(...).map is not a function
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:2465:9
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:119:3)
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:284:15
+    at Function.process_params (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:346:12)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:280:10)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:534:5
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+[2025-10-31T07:29:15.159Z] [ERROR] [8ztqui02umhej8pec] response: GET /api/activity/recent?limit=20 - 500 { duration: '3ms', status: 500 }
+TypeError: rows.slice is not a function
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:2442:24
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:119:3)
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:284:15
+    at Function.process_params (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:346:12)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:280:10)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:534:5
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+recent activity failed TypeError: all(...).map is not a function
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:2465:9
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:119:3)
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:284:15
+    at Function.process_params (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:346:12)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:280:10)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:534:5
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+[2025-10-31T07:29:15.208Z] [ERROR] [dfsxiut3wmhej8pfq] response: GET /api/activity/recent?limit=20 - 500 { duration: '2ms', status: 500 }
+TypeError: rows.slice is not a function
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:2442:24
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:119:3)
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:284:15
+    at Function.process_params (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:346:12)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:280:10)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:534:5
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+recent activity failed TypeError: all(...).map is not a function
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:2465:9
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:119:3)
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:284:15
+    at Function.process_params (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:346:12)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:280:10)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:534:5
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+[2025-10-31T07:29:15.481Z] [ERROR] [4b6db5lmfmhej8pnc] response: GET /api/activity/recent?limit=20 - 500 { duration: '1ms', status: 500 }
+TypeError: rows.slice is not a function
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:2442:24
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:119:3)
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:284:15
+    at Function.process_params (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:346:12)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:280:10)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:534:5
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+recent activity failed TypeError: all(...).map is not a function
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:2465:9
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:119:3)
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:284:15
+    at Function.process_params (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:346:12)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:280:10)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:534:5
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+[2025-10-31T07:29:15.813Z] [ERROR] [nx90m8e7dmhej8pwj] response: GET /api/activity/recent?limit=20 - 500 { duration: '2ms', status: 500 }
+TypeError: rows.slice is not a function
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:2442:24
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:119:3)
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:284:15
+    at Function.process_params (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:346:12)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:280:10)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:534:5
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+[2025-10-31T07:29:15.842Z] [ERROR] [mctq0818wmhej8pxc] response: GET /acks/export?year=2025&adminEmail=oluwatoba.ogunsakin%40sunbeth.net - 403 { duration: '2ms', status: 403 }
+[2025-10-31T07:29:15.858Z] [ERROR] [etnsdom68mhej8pxt] response: GET /consents/export?since=2025-01-01T00%3A00%3A00.000Z&adminEmail=oluwatoba.ogunsakin%40sunbeth.net - 403 { duration: '1ms', status: 403 }
+[2025-10-31T07:29:16.097Z] [ERROR] [y4gtfe83fmhej8q4g] response: GET /acks/export?year=2025&adminEmail=oluwatoba.ogunsakin%40sunbeth.net - 403 { duration: '1ms', status: 403 }
+[2025-10-31T07:29:16.116Z] [ERROR] [m4q59kxnxmhej8q4z] response: GET /consents/export?since=2025-01-01T00%3A00%3A00.000Z&adminEmail=oluwatoba.ogunsakin%40sunbeth.net - 403 { duration: '1ms', status: 403 }
+[2025-10-31T07:29:33.826Z] [ERROR] [v2m2lq9xhmhej93sx] response: GET /api/theme/effective?module=admin - 500 { duration: '1ms', status: 500 }
+[2025-10-31T07:29:33.844Z] [ERROR] [4is0jncthmhej93tf] response: GET /api/theme/effective - 500 { duration: '1ms', status: 500 }
+[2025-10-31T07:29:33.849Z] [ERROR] [66wt4r8fvmhej93tk] response: GET /api/theme/effective?module=admin - 500 { duration: '1ms', status: 500 }
+[2025-10-31T07:29:33.861Z] [ERROR] [yo6y47nfpmhej93tu] response: GET /api/theme/effective - 500 { duration: '1ms', status: 500 }
+effective perms failed TypeError: roleRows is not iterable
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:2016:23
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:119:3)
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:284:15
+    at Function.process_params (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:346:12)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:280:10)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:534:5
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+[2025-10-31T07:29:33.939Z] [ERROR] [2thmir6jbmhej93w1] response: GET /api/rbac/effective?email=oluwatoba.ogunsakin%40sunbeth.net - 500 { duration: '2ms', status: 500 }
+[2025-10-31T07:29:33.972Z] [ERROR] [j79neyfijmhej93wy] response: GET /api/theme/effective - 500 { duration: '2ms', status: 500 }
+effective perms failed TypeError: roleRows is not iterable
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:2016:23
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:119:3)
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:284:15
+    at Function.process_params (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:346:12)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:280:10)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:534:5
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+[2025-10-31T07:29:35.160Z] [ERROR] [tero62izvmhej94ty] response: GET /api/rbac/effective?email=oluwatoba.ogunsakin%40sunbeth.net - 500 { duration: '2ms', status: 500 }
+[2025-10-31T07:29:39.839Z] [ERROR] [3jtp7co5lmhej98fx] response: GET /api/theme/effective?module=admin - 500 { duration: '2ms', status: 500 }
+TypeError: rows.slice is not a function
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:2442:24
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:119:3)
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:284:15
+    at Function.process_params (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:346:12)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:280:10)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:534:5
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+TypeError: rows.slice is not a function
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:2442:24
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:119:3)
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:284:15
+    at Function.process_params (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:346:12)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:280:10)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:534:5
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+recent activity failed TypeError: all(...).map is not a function
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:2465:9
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:119:3)
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:284:15
+    at Function.process_params (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:346:12)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:280:10)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:534:5
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+[2025-10-31T07:29:40.320Z] [ERROR] [ycvrshcozmhej98tb] response: GET /api/activity/recent?limit=20 - 500 { duration: '1ms', status: 500 }
+TypeError: rows.slice is not a function
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:2442:24
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:119:3)
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:284:15
+    at Function.process_params (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:346:12)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:280:10)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:534:5
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+recent activity failed TypeError: all(...).map is not a function
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:2465:9
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:119:3)
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:284:15
+    at Function.process_params (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:346:12)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:280:10)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:534:5
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+[2025-10-31T07:29:40.346Z] [ERROR] [zdkwj4l4gmhej98u0] response: GET /api/activity/recent?limit=20 - 500 { duration: '2ms', status: 500 }
+TypeError: rows.slice is not a function
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:2442:24
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:119:3)
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:284:15
+    at Function.process_params (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:346:12)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:280:10)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:534:5
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+recent activity failed TypeError: all(...).map is not a function
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:2465:9
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:119:3)
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:284:15
+    at Function.process_params (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:346:12)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:280:10)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:534:5
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+[2025-10-31T07:29:40.744Z] [ERROR] [54hsiamy6mhej9951] response: GET /api/activity/recent?limit=20 - 500 { duration: '3ms', status: 500 }
+[2025-10-31T07:29:40.923Z] [ERROR] [7our37y6cmhej99a1] response: GET /acks/export?year=2025&adminEmail=oluwatoba.ogunsakin%40sunbeth.net - 403 { duration: '2ms', status: 403 }
+[2025-10-31T07:29:40.937Z] [ERROR] [c79rnoir7mhej99ag] response: GET /consents/export?since=2025-01-01T00%3A00%3A00.000Z&adminEmail=oluwatoba.ogunsakin%40sunbeth.net - 403 { duration: '1ms', status: 403 }
+recent activity failed TypeError: all(...).map is not a function
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:2465:9
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:119:3)
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:284:15
+    at Function.process_params (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:346:12)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:280:10)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:534:5
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+[2025-10-31T07:29:41.074Z] [ERROR] [amq7h8ep6mhej99e8] response: GET /api/activity/recent?limit=20 - 500 { duration: '2ms', status: 500 }
+[2025-10-31T07:29:41.203Z] [ERROR] [rqejh9uewmhej99ht] response: GET /acks/export?year=2025&adminEmail=oluwatoba.ogunsakin%40sunbeth.net - 403 { duration: '2ms', status: 403 }
+[2025-10-31T07:29:41.219Z] [ERROR] [474dn877zmhej99ia] response: GET /consents/export?since=2025-01-01T00%3A00%3A00.000Z&adminEmail=oluwatoba.ogunsakin%40sunbeth.net - 403 { duration: '1ms', status: 403 }
+[2025-10-31T07:29:54.081Z] [ERROR] [0wjwcusx3mhej9jfj] response: GET /api/theme/effective?module=admin - 500 { duration: '2ms', status: 500 }
+[2025-10-31T07:29:54.100Z] [ERROR] [sw9gm27lsmhej9jg2] response: GET /api/theme/effective - 500 { duration: '2ms', status: 500 }
+[2025-10-31T07:29:54.104Z] [ERROR] [wolcpp2smmhej9jg6] response: GET /api/theme/effective?module=admin - 500 { duration: '2ms', status: 500 }
+[2025-10-31T07:29:54.115Z] [ERROR] [wvc6tayxomhej9jgh] response: GET /api/theme/effective - 500 { duration: '2ms', status: 500 }
+[2025-10-31T07:29:54.188Z] [ERROR] [8qsjvbpaqmhej9jij] response: GET /api/theme/effective - 500 { duration: '1ms', status: 500 }
+effective perms failed TypeError: roleRows is not iterable
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:2016:23
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:119:3)
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:284:15
+    at Function.process_params (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:346:12)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:280:10)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:534:5
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+[2025-10-31T07:29:57.412Z] [ERROR] [dbwoyc8vjmhej9m03] response: GET /api/rbac/effective?email=oluwatoba.ogunsakin%40sunbeth.net - 500 { duration: '1ms', status: 500 }
+effective perms failed TypeError: roleRows is not iterable
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:2016:23
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:119:3)
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:284:15
+    at Function.process_params (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:346:12)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:280:10)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:534:5
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+[2025-10-31T07:30:11.492Z] [ERROR] [hxkwelkj6mhej9wv6] response: GET /api/rbac/effective?email=oluwatoba.ogunsakin%40sunbeth.net - 500 { duration: '2ms', status: 500 }
+[2025-10-31T07:30:16.857Z] [ERROR] [iez1sgqhpmheja106] response: GET /api/theme/effective?module=admin - 500 { duration: '3ms', status: 500 }
+TypeError: rows.slice is not a function
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:2442:24
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:119:3)
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:284:15
+    at Function.process_params (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:346:12)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:280:10)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:534:5
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+TypeError: rows.slice is not a function
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:2442:24
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:119:3)
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:284:15
+    at Function.process_params (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:346:12)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:280:10)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:534:5
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+recent activity failed TypeError: all(...).map is not a function
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:2465:9
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:119:3)
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:284:15
+    at Function.process_params (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:346:12)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:280:10)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:534:5
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+[2025-10-31T07:30:17.206Z] [ERROR] [0lfzqfwbamheja19w] response: GET /api/activity/recent?limit=20 - 500 { duration: '2ms', status: 500 }
+TypeError: rows.slice is not a function
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:2442:24
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:119:3)
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:284:15
+    at Function.process_params (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:346:12)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:280:10)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:534:5
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+recent activity failed TypeError: all(...).map is not a function
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:2465:9
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:119:3)
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:284:15
+    at Function.process_params (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:346:12)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:280:10)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:534:5
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+[2025-10-31T07:30:17.538Z] [ERROR] [6nkfjhrcxmheja1j2] response: GET /api/activity/recent?limit=20 - 500 { duration: '4ms', status: 500 }
+recent activity failed TypeError: all(...).map is not a function
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:2465:9
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:119:3)
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:284:15
+    at Function.process_params (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:346:12)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:280:10)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:534:5
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+[2025-10-31T07:30:17.575Z] [ERROR] [comyry599mheja1k3] response: GET /api/activity/recent?limit=20 - 500 { duration: '3ms', status: 500 }
+TypeError: rows.slice is not a function
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:2442:24
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:119:3)
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:284:15
+    at Function.process_params (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:346:12)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:280:10)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:534:5
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+[2025-10-31T07:30:17.594Z] [ERROR] [1zz1ku34umheja1ko] response: GET /acks/export?year=2025&adminEmail=oluwatoba.ogunsakin%40sunbeth.net - 403 { duration: '2ms', status: 403 }
+[2025-10-31T07:30:17.615Z] [ERROR] [534o2dmf6mheja1l8] response: GET /consents/export?since=2025-01-01T00%3A00%3A00.000Z&adminEmail=oluwatoba.ogunsakin%40sunbeth.net - 403 { duration: '3ms', status: 403 }
+recent activity failed TypeError: all(...).map is not a function
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:2465:9
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:119:3)
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:284:15
+    at Function.process_params (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:346:12)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:280:10)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:534:5
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+[2025-10-31T07:30:17.803Z] [ERROR] [me0dwrrxsmheja1qh] response: GET /api/activity/recent?limit=20 - 500 { duration: '2ms', status: 500 }
+[2025-10-31T07:30:17.910Z] [ERROR] [24ixl1sxymheja1th] response: GET /acks/export?year=2025&adminEmail=oluwatoba.ogunsakin%40sunbeth.net - 403 { duration: '1ms', status: 403 }
+[2025-10-31T07:30:17.933Z] [ERROR] [i4ippd4fxmheja1u2] response: GET /consents/export?since=2025-01-01T00%3A00%3A00.000Z&adminEmail=oluwatoba.ogunsakin%40sunbeth.net - 403 { duration: '3ms', status: 403 }
+TypeError: rows.slice is not a function
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:2442:24
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:119:3)
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:284:15
+    at Function.process_params (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:346:12)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:280:10)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:534:5
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+TypeError: rows.slice is not a function
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:2442:24
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:119:3)
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:284:15
+    at Function.process_params (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:346:12)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:280:10)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:534:5
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+recent activity failed TypeError: all(...).map is not a function
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:2465:9
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:119:3)
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:284:15
+    at Function.process_params (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:346:12)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:280:10)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:534:5
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+[2025-10-31T07:30:52.595Z] [ERROR] [a4vobuao0mhejaskw] response: GET /api/activity/recent?limit=20 - 500 { duration: '3ms', status: 500 }
+TypeError: rows.slice is not a function
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:2442:24
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:119:3)
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:284:15
+    at Function.process_params (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:346:12)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:280:10)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:534:5
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+recent activity failed TypeError: all(...).map is not a function
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:2465:9
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:119:3)
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:284:15
+    at Function.process_params (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:346:12)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:280:10)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:534:5
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+[2025-10-31T07:30:52.663Z] [ERROR] [7jmm1kj15mhejasms] response: GET /api/activity/recent?limit=20 - 500 { duration: '3ms', status: 500 }
+recent activity failed TypeError: all(...).map is not a function
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:2465:9
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:119:3)
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:284:15
+    at Function.process_params (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:346:12)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:280:10)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:534:5
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+[2025-10-31T07:30:52.924Z] [ERROR] [e87p7ual3mhejasu1] response: GET /api/activity/recent?limit=20 - 500 { duration: '3ms', status: 500 }
+TypeError: rows.slice is not a function
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:2442:24
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:119:3)
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:284:15
+    at Function.process_params (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:346:12)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:280:10)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:534:5
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+[2025-10-31T07:30:52.945Z] [ERROR] [hrirlcy3fmhejasuo] response: GET /acks/export?year=2025&adminEmail=oluwatoba.ogunsakin%40sunbeth.net - 403 { duration: '1ms', status: 403 }
+[2025-10-31T07:30:52.964Z] [ERROR] [bfiu3u43tmhejasv6] response: GET /consents/export?since=2025-01-01T00%3A00%3A00.000Z&adminEmail=oluwatoba.ogunsakin%40sunbeth.net - 403 { duration: '2ms', status: 403 }
+[2025-10-31T07:30:53.182Z] [ERROR] [vjbk92pw6mhejat18] response: GET /acks/export?year=2025&adminEmail=oluwatoba.ogunsakin%40sunbeth.net - 403 { duration: '2ms', status: 403 }
+[2025-10-31T07:30:53.198Z] [ERROR] [004e5j2rgmhejat1o] response: GET /consents/export?since=2025-01-01T00%3A00%3A00.000Z&adminEmail=oluwatoba.ogunsakin%40sunbeth.net - 403 { duration: '2ms', status: 403 }
+recent activity failed TypeError: all(...).map is not a function
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:2465:9
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:119:3)
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:284:15
+    at Function.process_params (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:346:12)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:280:10)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:534:5
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+[2025-10-31T07:30:53.385Z] [ERROR] [5ltt4v8dnmhejat6u] response: GET /api/activity/recent?limit=20 - 500 { duration: '3ms', status: 500 }
+[2025-10-31T07:31:44.852Z] [ERROR] [oqdlq1n21mhejbwwi] response: GET /api/theme/effective?module=admin - 500 { duration: '2ms', status: 500 }
+[2025-10-31T07:31:44.865Z] [ERROR] [qz5y9i5w9mhejbwwv] response: GET /api/theme/effective - 500 { duration: '2ms', status: 500 }
+[2025-10-31T07:31:44.871Z] [ERROR] [lp9ta5cqvmhejbwx2] response: GET /api/theme/effective?module=admin - 500 { duration: '1ms', status: 500 }
+[2025-10-31T07:31:44.897Z] [ERROR] [gjgz03qf6mhejbwxr] response: GET /api/theme/effective - 500 { duration: '2ms', status: 500 }
+effective perms failed TypeError: roleRows is not iterable
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:2016:23
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:119:3)
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:284:15
+    at Function.process_params (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:346:12)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:280:10)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:534:5
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+[2025-10-31T07:31:44.905Z] [ERROR] [dlgx93905mhejbwxz] response: GET /api/rbac/effective?email=oluwatoba.ogunsakin%40sunbeth.net - 500 { duration: '2ms', status: 500 }
+[2025-10-31T07:31:44.922Z] [ERROR] [u6uzd0k58mhejbwyg] response: GET /api/theme/effective - 500 { duration: '2ms', status: 500 }
+effective perms failed TypeError: roleRows is not iterable
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:2016:23
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:119:3)
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:284:15
+    at Function.process_params (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:346:12)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:280:10)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:534:5
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+[2025-10-31T07:31:48.152Z] [ERROR] [yu5n13ihgmhejbzg5] response: GET /api/rbac/effective?email=oluwatoba.ogunsakin%40sunbeth.net - 500 { duration: '2ms', status: 500 }
+[2025-10-31T07:32:00.883Z] [ERROR] [yys9k7wqmmhejc99t] response: GET /api/theme/effective?module=admin - 500 { duration: '2ms', status: 500 }
+TypeError: rows.slice is not a function
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:2442:24
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:119:3)
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:284:15
+    at Function.process_params (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:346:12)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:280:10)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:534:5
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+TypeError: rows.slice is not a function
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:2442:24
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:119:3)
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:284:15
+    at Function.process_params (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:346:12)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:280:10)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:534:5
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+recent activity failed TypeError: all(...).map is not a function
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:2465:9
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:119:3)
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:284:15
+    at Function.process_params (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:346:12)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:280:10)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:534:5
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+[2025-10-31T07:32:01.302Z] [ERROR] [z6a3o9l2zmhejc9lg] response: GET /api/activity/recent?limit=20 - 500 { duration: '2ms', status: 500 }
+TypeError: rows.slice is not a function
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:2442:24
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:119:3)
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:284:15
+    at Function.process_params (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:346:12)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:280:10)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:534:5
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+recent activity failed TypeError: all(...).map is not a function
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:2465:9
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:119:3)
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:284:15
+    at Function.process_params (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:346:12)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:280:10)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:534:5
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+[2025-10-31T07:32:01.633Z] [ERROR] [k4081veufmhejc9um] response: GET /api/activity/recent?limit=20 - 500 { duration: '3ms', status: 500 }
+recent activity failed TypeError: all(...).map is not a function
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:2465:9
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:119:3)
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:284:15
+    at Function.process_params (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:346:12)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:280:10)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:534:5
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+[2025-10-31T07:32:01.649Z] [ERROR] [8ydqnp9u4mhejc9v2] response: GET /api/activity/recent?limit=20 - 500 { duration: '3ms', status: 500 }
+[2025-10-31T07:32:01.654Z] [ERROR] [lulg7y0xnmhejc9v8] response: GET /acks/export?year=2025&adminEmail=oluwatoba.ogunsakin%40sunbeth.net - 403 { duration: '2ms', status: 403 }
+[2025-10-31T07:32:01.659Z] [ERROR] [1qiubntnrmhejc9vd] response: GET /acks/export?year=2025&adminEmail=oluwatoba.ogunsakin%40sunbeth.net - 403 { duration: '2ms', status: 403 }
+TypeError: rows.slice is not a function
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:2442:24
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:119:3)
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:284:15
+    at Function.process_params (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:346:12)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:280:10)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:534:5
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+[2025-10-31T07:32:01.672Z] [ERROR] [tarm8wc4amhejc9vq] response: GET /consents/export?since=2025-01-01T00%3A00%3A00.000Z&adminEmail=oluwatoba.ogunsakin%40sunbeth.net - 403 { duration: '2ms', status: 403 }
+[2025-10-31T07:32:01.677Z] [ERROR] [oz45ayzsfmhejc9vw] response: GET /consents/export?since=2025-01-01T00%3A00%3A00.000Z&adminEmail=oluwatoba.ogunsakin%40sunbeth.net - 403 { duration: '1ms', status: 403 }
+recent activity failed TypeError: all(...).map is not a function
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:2465:9
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:119:3)
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:284:15
+    at Function.process_params (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:346:12)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:280:10)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:534:5
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+[2025-10-31T07:32:01.910Z] [ERROR] [fagwg3ulvmhejca2a] response: GET /api/activity/recent?limit=20 - 500 { duration: '4ms', status: 500 }
+[2025-10-31T07:33:36.231Z] [ERROR] [d0wdrwa9nmhejeaud] response: GET /api/theme/effective?module=admin - 500 { duration: '2ms', status: 500 }
+[2025-10-31T07:33:36.246Z] [ERROR] [ku0zljwu5mhejeaut] response: GET /api/theme/effective - 500 { duration: '1ms', status: 500 }
+[2025-10-31T07:33:36.256Z] [ERROR] [e6jrp3g7cmhejeav3] response: GET /api/theme/effective - 500 { duration: '1ms', status: 500 }
+[2025-10-31T07:33:36.259Z] [ERROR] [nmk65knkmmhejeav7] response: GET /api/theme/effective?module=admin - 500 { duration: '0ms', status: 500 }
+effective perms failed TypeError: roleRows is not iterable
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:2016:23
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:119:3)
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:284:15
+    at Function.process_params (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:346:12)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:280:10)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:534:5
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+[2025-10-31T07:33:36.294Z] [ERROR] [ea2757tpimhejeaw4] response: GET /api/rbac/effective?email=oluwatoba.ogunsakin%40sunbeth.net - 500 { duration: '2ms', status: 500 }
+[2025-10-31T07:33:36.328Z] [ERROR] [i8h0f0bn2mhejeax3] response: GET /api/theme/effective - 500 { duration: '1ms', status: 500 }
+effective perms failed TypeError: roleRows is not iterable
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:2016:23
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:119:3)
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:284:15
+    at Function.process_params (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:346:12)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:280:10)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:534:5
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+[2025-10-31T07:33:38.404Z] [ERROR] [mpy4otgjymhejecir] response: GET /api/rbac/effective?email=oluwatoba.ogunsakin%40sunbeth.net - 500 { duration: '1ms', status: 500 }
+[2025-10-31T07:33:43.360Z] [ERROR] [5w5vtf318mhejegce] response: GET /api/theme/effective?module=admin - 500 { duration: '2ms', status: 500 }
+TypeError: rows.slice is not a function
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:2442:24
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:119:3)
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:284:15
+    at Function.process_params (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:346:12)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:280:10)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:534:5
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+recent activity failed TypeError: all(...).map is not a function
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:2465:9
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:119:3)
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:284:15
+    at Function.process_params (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:346:12)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:280:10)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:534:5
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+[2025-10-31T07:33:54.870Z] [ERROR] [1p2zaqnqgmhejep83] response: GET /api/activity/recent?limit=20 - 500 { duration: '3ms', status: 500 }
+TypeError: rows.slice is not a function
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:2442:24
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:119:3)
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:284:15
+    at Function.process_params (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:346:12)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:280:10)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:534:5
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+recent activity failed TypeError: all(...).map is not a function
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:2465:9
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\route.js:119:3)
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:284:15
+    at Function.process_params (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:346:12)
+    at next (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\index.js:280:10)
+    at C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\index.js:534:5
+    at Layer.handle [as handle_request] (C:\Users\OluwatobaOgunsakin\Downloads\sunbeth_doc_ack\sunbeth_doc_backend\node_modules\express\lib\router\layer.js:95:5)
+[2025-10-31T07:33:54.901Z] [ERROR] [mi3eb8wphmhejep8y] response: GET /api/activity/recent?limit=20 - 500 { duration: '3ms', status: 500 }
