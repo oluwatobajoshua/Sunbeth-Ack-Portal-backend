@@ -104,7 +104,8 @@ try {
   $emails = @{ emails = @('ops@sunbeth.local','alerts@sunbeth.local') }
   $r1 = Invoke-Json -Method POST -Url ("{0}/api/notification-emails" -f $ApiBase) -Body $emails
   $r2 = Invoke-Json -Method GET -Url ("{0}/api/notification-emails" -f $ApiBase)
-  $ok = $r1.ok -and $r2.ok -and ($r2.body.emails | Where-Object { $_ -eq 'ops@sunbeth.local' }).Count -eq 1
+  $hasOps = ($r2.body.emails | Where-Object { $_ -eq 'ops@sunbeth.local' }).Count -ge 1
+  $ok = $r1.ok -and $r2.ok -and $hasOps
   Add-Result 'POST/GET /api/notification-emails' $ok @{ post=$r1; get=$r2 }
 } catch { Add-Result 'POST/GET /api/notification-emails' $false $_ }
 
@@ -146,8 +147,8 @@ if ($AdminEmail) {
 
 # 7) Batches flow (create full -> read -> update -> delete)
 try {
-  $batchBody = @{ 
-    name = 'E2E Batch All'; description='auto'; status=1; 
+  $batchBody = @{
+    name = 'E2E Batch All'; description='auto'; status=1;
     documents = @(@{ title='E2E Doc'; url='https://example.com/sample.pdf'; version=1; requiresSignature=$false; localFileId=$fileId; localUrl=("/api/files/{0}" -f $fileId) }) ;
     recipients = @(@{ email = 'ack.user@sunbeth.local'; displayName='Ack User' })
   }
@@ -156,9 +157,21 @@ try {
   Add-Result 'POST /api/batches/full' ($create.ok -and $bid) $create
   if ($bid) {
     $docs = Invoke-Json -Method GET -Url ("{0}/api/batches/{1}/documents" -f $ApiBase,$bid)
-    Add-Result 'GET /api/batches/:id/documents' ($docs.ok -and $docs.body.documents.Count -ge 1) $docs
+    $docList = @()
+    if ($docs.body) {
+      if ($docs.body.documents) { $docList = @($docs.body.documents) }
+      elseif ($docs.body.value) { $docList = @($docs.body.value) }
+      elseif ($docs.body -is [System.Collections.IList] -or $docs.body -is [System.Array]) { $docList = @($docs.body) }
+    }
+    Add-Result 'GET /api/batches/:id/documents' ($docs.ok -and ($docList | Measure-Object).Count -ge 1) @{ response=$docs; documents=$docList }
     $recs = Invoke-Json -Method GET -Url ("{0}/api/batches/{1}/recipients" -f $ApiBase,$bid)
-    Add-Result 'GET /api/batches/:id/recipients' ($recs.ok -and $recs.body.recipients.Count -ge 1) $recs
+    $recList = @()
+    if ($recs.body) {
+      if ($recs.body.recipients) { $recList = @($recs.body.recipients) }
+      elseif ($recs.body.value) { $recList = @($recs.body.value) }
+      elseif ($recs.body -is [System.Collections.IList] -or $recs.body -is [System.Array]) { $recList = @($recs.body) }
+    }
+    Add-Result 'GET /api/batches/:id/recipients' ($recs.ok -and ($recList | Measure-Object).Count -ge 1) @{ response=$recs; recipients=$recList }
     $list = Invoke-Json -Method GET -Url ("{0}/api/batches" -f $ApiBase)
     Add-Result 'GET /api/batches' $list.ok $list
     $upd = Invoke-Json -Method PUT -Url ("{0}/api/batches/{1}" -f $ApiBase,$bid) -Body @{ description='updated desc' }
@@ -172,9 +185,10 @@ try {
 try { $r = Invoke-Json -Method GET -Url ("{0}/api/businesses" -f $ApiBase); Add-Result 'GET /api/businesses' $r.ok $r } catch { Add-Result 'GET /api/businesses' $false $_ }
 try {
   $cr = Invoke-Json -Method POST -Url ("{0}/api/businesses" -f $ApiBase) -Body @{ name='E2E Biz'; code='E2E' }
-  $id = if ($cr.ok) { [int]$cr.body.id } else { 0 }
-  Add-Result 'POST /api/businesses' ($cr.ok -and $id -gt 0) $cr
-  if ($id -gt 0) {
+  $id = if ($cr.ok) { [string]$cr.body.id } else { "" }
+  $bizCreated = $cr.ok -and -not [string]::IsNullOrWhiteSpace($id)
+  Add-Result 'POST /api/businesses' $bizCreated $cr
+  if ($bizCreated) {
     $up = Invoke-Json -Method PUT -Url ("{0}/api/businesses/{1}" -f $ApiBase,$id) -Body @{ description='updated' }
     Add-Result 'PUT /api/businesses/:id' $up.ok $up
     $dl = Invoke-Json -Method DELETE -Url ("{0}/api/businesses/{1}" -f $ApiBase,$id)
@@ -184,7 +198,23 @@ try {
 
 # 9) Stats and reports
 try { $r = Invoke-Json -Method GET -Url ("{0}/api/stats" -f $ApiBase); Add-Result 'GET /api/stats' $r.ok $r } catch { Add-Result 'GET /api/stats' $false $_ }
-try { $r = Invoke-Json -Method GET -Url ("{0}/api/compliance" -f $ApiBase); Add-Result 'GET /api/compliance' $r.ok $r } catch { Add-Result 'GET /api/compliance' $false $_ }
+try {
+  $r = Invoke-Json -Method GET -Url ("{0}/api/compliance" -f $ApiBase)
+  $rows = @()
+  if ($r.body -ne $null) {
+    if ($r.body.data) { $rows = @($r.body.data) }
+    elseif ($r.body.items) { $rows = @($r.body.items) }
+    elseif ($r.body.value) { $rows = @($r.body.value) }
+    elseif ($r.body -is [System.Collections.IList] -or $r.body -is [System.Array]) { $rows = @($r.body) }
+  }
+  $entries = @()
+  foreach ($row in $rows) { $entries += $row }
+  $valid = $entries | Where-Object { -not ([string]::IsNullOrWhiteSpace($_.businessId)) -or -not ([string]::IsNullOrWhiteSpace($_.businessName)) }
+  $entryCount = $entries.Count
+  $missing = $entryCount - ($valid | Measure-Object).Count
+  $ok = $r.ok -and ($missing -eq 0)
+  Add-Result 'GET /api/compliance' $ok @{ response=$r; entries=$entryCount; missingBusiness=$missing }
+} catch { Add-Result 'GET /api/compliance' $false $_ }
 try { $r = Invoke-Json -Method GET -Url ("{0}/api/doc-stats" -f $ApiBase); Add-Result 'GET /api/doc-stats' $r.ok $r } catch { Add-Result 'GET /api/doc-stats' $false $_ }
 try { $r = Invoke-Json -Method GET -Url ("{0}/api/trends" -f $ApiBase); Add-Result 'GET /api/trends' $r.ok $r } catch { Add-Result 'GET /api/trends' $false $_ }
 

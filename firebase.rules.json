@@ -1,0 +1,15 @@
+{
+  "rules": {
+    // Default deny everything. Admin SDK/service accounts bypass these checks.
+    ".read": false,
+    ".write": false,
+    "tables": {
+      "$table": {
+        "$doc": {
+          ".read": "auth != null && (auth.token.admin === true || auth.token.rtdb_admin === true)",
+          ".write": "auth != null && (auth.token.admin === true || auth.token.rtdb_admin === true)"
+        }
+      }
+    }
+  }
+}

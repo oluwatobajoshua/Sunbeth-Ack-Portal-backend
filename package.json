@@ -8,8 +8,14 @@
     "node": ">=18"
   },
   "scripts": {
-    "start": "node index.js",
+    "start": "node server.js",
+    "start:legacy": "node index.js",
     "dev": "node index.js",
+    "start:modular": "node server.js",
+    "win:start:modular": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\start-modular.ps1",
+    "win:smoke:modular": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\smoke-modular.ps1",
+    "win:logs": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\tail-logs.ps1",
+    "win:firewall-open": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\open-firewall.ps1 -Port 4116",
     "win:status": "powershell -NoProfile -ExecutionPolicy Bypass -File ..\\scripts\\manage-backend.ps1 -Action Status",
     "win:start": "powershell -NoProfile -ExecutionPolicy Bypass -File ..\\scripts\\manage-backend.ps1 -Action Start",
     "win:stop": "powershell -NoProfile -ExecutionPolicy Bypass -File ..\\scripts\\manage-backend.ps1 -Action Stop",
@@ -21,7 +27,14 @@
     "format:check": "prettier --check .",
     "test:int": "node --test .\\tests\\*.test.mjs",
     "test:e2e": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\tests\\smoke-e2e.ps1",
-    "test:e2e:all": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\tests\\e2e-all.ps1"
+    "test:e2e:all": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\tests\\e2e-all.ps1",
+    "test:smoke:local": "node .\\tests\\smoke-local.js",
+    "test:smoke:inprocess": "node .\\tests\\smoke-inprocess.js",
+    "test:smoke:modules": "node .\\tests\\smoke-inprocess-modules.js"
+    ,
+    "test:smoke:sharepoint": "node .\\tests\\smoke-sharepoint-upload.js",
+    "test:smoke:admin-sp": "node .\\tests\\smoke-admin-sharepoint-settings.js",
+    "test:smoke:sp-public": "node .\\tests\\smoke-sharepoint-public-settings.js"
   },
   "dependencies": {
     "@libsql/client": "^0.10.0",
@@ -37,14 +50,20 @@
     "express": "^4.19.2",
     "express-rate-limit": "^7.4.0",
     "firebase-admin": "^12.6.0",
+    "google-auth-library": "^9.15.1",
     "helmet": "^7.1.0",
     "https-proxy-agent": "^7.0.2",
     "mime-types": "^2.1.35",
     "multer": "^2.0.2",
+    "nodemailer": "^6.9.14",
     "otplib": "^12.0.1",
     "papaparse": "^5.5.3",
+    "pdf-lib": "^1.17.1",
     "pdfkit": "^0.15.0",
     "pg": "^8.16.3",
+    "puppeteer": "^24.34.0",
+    "pureimage": "^0.3.17",
+    "qrcode": "^1.5.3",
     "serverless-http": "^3.2.0",
     "sql.js": "^1.11.0",
     "sunbeth-ack-portal-root": "file:..",
@@ -55,6 +74,7 @@
   "devDependencies": {
     "eslint": "^8.57.0",
     "eslint-config-prettier": "^9.1.0",
-    "prettier": "^3.3.3"
+    "prettier": "^3.3.3",
+    "supertest": "^6.3.4"
   }
 }

@@ -96,6 +96,21 @@ sunbeth_doc_backend/
 - `GET /api/analytics` - Get system analytics
 - `GET /api/health` - Health check endpoint
 
+### SharePoint Integration (Completion PDF Upload)
+- Settings
+   - `GET /api/settings/sharepoint` → `{ siteName, libraryName }` (public read)
+   - `PUT /api/admin/settings` with `{ sharepoint_site_name, sharepoint_library_name }` (admin-only)
+- Upload endpoint
+   - `POST /api/sharepoint/upload-completion-pdf`
+   - Body: `{ userEmail, businessName, departmentName, fileName, contentBytes, emailFieldName? }`
+   - Description: Resolves Site → Library → Drive, navigates `BusinessName/DepartmentName`, locates the user folder by matching a list item email field (supports `Employee Email`, `Employee_x0020_Email`, `EmployeeEmail`, or override via `emailFieldName`), then uploads the PDF.
+   - Response: `{ ok: true, item: { id, name, webUrl } }` on success; error with message on misconfiguration or auth failure.
+- Environment (app token): `MS_TENANT_ID`, `MS_CLIENT_ID`, `MS_CLIENT_SECRET`.
+
+### Email Mirror PDFs
+- `POST /api/emails/user-completion-pdf` → returns base64 PDF of the user completion email.
+- `POST /api/emails/admin-completion-pdf` → returns base64 PDF of the admin completion email.
+
 ## 🗄️ Database Schema
 
 The SQLite database includes the following main tables:
