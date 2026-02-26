@@ -101,16 +101,17 @@ async function sendHtml(to, subject, html, text) {
 }
 
 async function sendOnboardingEmail(email, name, link) {
-  const subject = 'Complete your onboarding';
+  const brand = process.env.BRAND_NAME || process.env.REACT_APP_BRAND_NAME || 'Acknowledgement Portal';
+  const subject = `Complete your onboarding to ${brand}`;
   const html = `
     <div style="font-family:Segoe UI,Tahoma,Arial,sans-serif">
       <h2 style="margin:0 0 12px 0">Set your password</h2>
       <p>Hello ${name || email},</p>
-      <p>Welcome to the Acknowledgement Portal. Click the button below to set your password and finish onboarding.</p>
+      <p>Welcome to ${brand}. Click the button below to set your password and finish onboarding.</p>
       <p style="margin:16px 0"><a href="${link}" style="background:#0c5343;color:#fff;padding:10px 14px;text-decoration:none;border-radius:6px" target="_blank" rel="noopener">Set Password</a></p>
       <p style="color:#666;font-size:12px">If the button does not work, copy this link into your browser:<br/><span style="word-break:break-all;color:#444">${link}</span></p>
     </div>`;
-  const text = `Hello ${name || email},\n\nOpen this link to set your password: ${link}`;
+  const text = `Hello ${name || email},\n\nWelcome to ${brand}. Open this link to set your password: ${link}`;
   return sendHtml(email, subject, html, text);
 }
 

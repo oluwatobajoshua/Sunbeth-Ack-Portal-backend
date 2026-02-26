@@ -9116,11 +9116,15 @@ async function start() {
 
       // Default SQL path (sqlite/libsql)
       const maybe2 = db.query(
-        `SELECT DISTINCT b.id, b.name, b.startDate, b.dueDate, b.status, b.description
+        `SELECT b.id, b.name, b.startDate, b.dueDate, b.status, b.description,
+                (SELECT COUNT(*) FROM documents WHERE batchId=b.id) as totalDocs,
+                (SELECT COUNT(*) FROM acks WHERE batchId=b.id AND LOWER(email)=?) as acknowledged
          FROM batches b
          JOIN recipients r ON r.batchId=b.id
-         WHERE LOWER(r.email)=? ORDER BY b.id DESC`,
-        [email]
+         WHERE LOWER(r.email)=?
+         GROUP BY b.id, b.name, b.startDate, b.dueDate, b.status, b.description
+         ORDER BY b.id DESC`,
+        [email, email]
       );
       const rows2 = maybe2 && typeof maybe2.then === 'function' ? await maybe2 : maybe2 || [];
       return res.json((Array.isArray(rows2) ? rows2 : []).map(mapBatch));
@@ -9501,6 +9505,14 @@ async function start() {
       const throttleHoursRaw = req.body?.throttleHours ?? req.query?.throttleHours ?? process.env.REMINDER_THROTTLE_HOURS ?? 24;
       const throttleHours = Number.isFinite(Number(throttleHoursRaw)) ? Number(throttleHoursRaw) : 24;
       const windowEnd = new Date(now.getTime() + daysWindow * 24 * 60 * 60 * 1000);
+      const batchIdRaw = req.body?.batchId ?? req.query?.batchId;
+      const rawList = Array.isArray(batchIdRaw) ? batchIdRaw : batchIdRaw != null ? [batchIdRaw] : [];
+      const batchIdSet = new Set(rawList.map((value) => String(value || '').trim()).filter((v) => v.length > 0));
+      const ignoreDueWindowRaw = req.body?.ignoreDueWindow ?? req.query?.ignoreDueWindow;
+      const ignoreDueWindow =
+        ignoreDueWindowRaw === true ||
+        String(ignoreDueWindowRaw || '').toLowerCase() === 'true' ||
+        ignoreDueWindowRaw === '1';
 
       const force = req.body?.force === true || String(req.body?.force) === '1' || req.query?.force === '1';
       if (!settings.enabled && !force) {
@@ -9514,20 +9526,24 @@ async function start() {
       ).replace(/\/$/, '');
 
       const batchesMaybe = all(
-        'SELECT id, name, dueDate, status FROM batches WHERE dueDate IS NOT NULL AND status = 1'
+        'SELECT id, name, dueDate, status FROM batches'
       );
       const batches = batchesMaybe && typeof batchesMaybe.then === 'function' ? await batchesMaybe : batchesMaybe || [];
+      const filteredBatches = batchIdSet.size
+        ? batches.filter((b) => batchIdSet.has(String(b.id)))
+        : batches.filter((b) => Number(b.status) === 1);
 
       let sent = 0;
       let skippedRecent = 0;
       const batchesConsidered = [];
 
-      for (const b of batches) {
+      for (const b of filteredBatches) {
         const batchId = b.id;
         const dueStr = String(b.dueDate || '').trim();
         const due = dueStr ? new Date(dueStr) : null;
-        if (!due || Number.isNaN(due.getTime())) continue;
-        if (due > windowEnd) continue; // not within reminder window yet
+        const hasValidDue = due && !Number.isNaN(due.getTime());
+        if (!hasValidDue && !ignoreDueWindow) continue;
+        if (hasValidDue && !ignoreDueWindow && due > windowEnd) continue; // not within reminder window yet
 
         batchesConsidered.push(batchId);
 
@@ -9569,10 +9585,12 @@ async function start() {
           }
 
           const outstanding = total - acked;
-          const subject = `Reminder: ${b.name} due ${due.toLocaleDateString()}`;
+          const dueLabel = hasValidDue ? due.toLocaleDateString() : 'No due date';
+          const dueDisplay = hasValidDue ? due.toLocaleString() : 'No due date';
+          const subject = `Reminder: ${b.name} due ${dueLabel}`;
           const portalLink = `${baseUrl}/acknowledgements/${batchId}`;
-          const html = `<div style="font-family:Segoe UI,Tahoma,Arial,sans-serif;color:#111"><h2 style="margin:0 0 12px 0">Reminder: ${b.name}</h2><p style="margin:0 0 10px 0">You still have <strong>${outstanding}</strong> of <strong>${total}</strong> documents to acknowledge.</p><p style="margin:0 0 10px 0">Due date: <strong>${due.toLocaleString()}</strong></p><p style="margin:0 0 12px 0">Please complete your acknowledgements before the deadline.</p><p style="margin:0"><a href="${portalLink}" target="_blank" rel="noopener" style="display:inline-block;padding:10px 14px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px;font-weight:600">Open Acknowledgement Portal</a></p><p style="margin:14px 0 0 0;color:#555;font-size:12px">If the button does not work, copy and paste this link: ${portalLink}</p></div>`;
-          const text = `Reminder: ${b.name}\nOutstanding: ${outstanding}/${total}\nDue: ${due.toLocaleString()}\nLink: ${portalLink}`;
+          const html = `<div style="font-family:Segoe UI,Tahoma,Arial,sans-serif;color:#111"><h2 style="margin:0 0 12px 0">Reminder: ${b.name}</h2><p style="margin:0 0 10px 0">You still have <strong>${outstanding}</strong> of <strong>${total}</strong> documents to acknowledge.</p><p style="margin:0 0 10px 0">Due date: <strong>${dueDisplay}</strong></p><p style="margin:0 0 12px 0">Please complete your acknowledgements before the deadline.</p><p style="margin:0"><a href="${portalLink}" target="_blank" rel="noopener" style="display:inline-block;padding:10px 14px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px;font-weight:600">Open Acknowledgement Portal</a></p><p style="margin:14px 0 0 0;color:#555;font-size:12px">If the button does not work, copy and paste this link: ${portalLink}</p></div>`;
+          const text = `Reminder: ${b.name}\nOutstanding: ${outstanding}/${total}\nDue: ${dueDisplay}\nLink: ${portalLink}`;
 
           try {
             await mailer.sendHtml(r.email, subject, html, text);
@@ -11129,12 +11147,20 @@ if (!IS_SERVERLESS && require.main === module) {
 }
 
 function mapBatch(r) {
+  const totalDocs = Number(r.totalDocs ?? 0);
+  const acknowledged = Number(r.acknowledged ?? 0);
+  const pendingDocs = Math.max(0, totalDocs - acknowledged);
+  const progressPercent = totalDocs === 0 ? 0 : Math.min(100, Math.round((acknowledged / totalDocs) * 100));
   return {
     toba_batchid: String(r.id),
     toba_name: r.name,
     toba_startdate: r.startDate || null,
     toba_duedate: r.dueDate || null,
     toba_status: r.status != null ? String(r.status) : null,
+    toba_totaldocs: totalDocs,
+    toba_acknowledged: acknowledged,
+    toba_pending_docs: pendingDocs,
+    toba_progress_percent: progressPercent,
   };
 }
 function mapDoc(r) {
