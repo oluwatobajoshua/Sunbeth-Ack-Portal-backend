@@ -395,6 +395,87 @@ async function start() {
     return Array.isArray(res) && res.length > 0 ? res[0] : null;
   };
 
+  // Precompute daily trends to avoid RTDB-wide scans
+  const rebuildTrendsCache = async (windowDays = 30) => {
+    const daysCount = Math.max(1, Math.min(Number(windowDays) || 30, 90));
+    const dayStrings = Array.from({ length: daysCount }, (_, i) =>
+      new Date(Date.now() - (daysCount - 1 - i) * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+    );
+    const since = dayStrings[0];
+    const completionsMap = new Map(dayStrings.map((d) => [d, 0]));
+    const activeMap = new Map(dayStrings.map((d) => [d, new Set()]));
+    const newBatchMap = new Map(dayStrings.map((d) => [d, 0]));
+
+    const [acksMaybe, batchesMaybe] = [
+      all('SELECT ackDate as date, email FROM acks'),
+      all('SELECT startDate as date FROM batches'),
+    ];
+    const acks = (acksMaybe && typeof acksMaybe.then === 'function') ? await acksMaybe : acksMaybe || [];
+    const batches = (batchesMaybe && typeof batchesMaybe.then === 'function') ? await batchesMaybe : batchesMaybe || [];
+
+    for (const a of acks) {
+      const dateStr = String(a.date || a.ackDate || '').slice(0, 10);
+      if (!dateStr || dateStr < since) continue;
+      if (!completionsMap.has(dateStr)) continue;
+      completionsMap.set(dateStr, (completionsMap.get(dateStr) || 0) + 1);
+      const em = String(a.email || '').toLowerCase();
+      activeMap.get(dateStr)?.add(em);
+    }
+    for (const b of batches) {
+      const dateStr = String(b.date || b.startDate || '').slice(0, 10);
+      if (!dateStr || dateStr < since) continue;
+      if (!newBatchMap.has(dateStr)) continue;
+      newBatchMap.set(dateStr, (newBatchMap.get(dateStr) || 0) + 1);
+    }
+
+    try { db.run('DELETE FROM trends_daily WHERE date>=?', [since]); } catch {}
+    for (const d of dayStrings) {
+      const comps = completionsMap.get(d) || 0;
+      const news = newBatchMap.get(d) || 0;
+      const act = activeMap.get(d)?.size || 0;
+      try { db.run('INSERT INTO trends_daily (date, completions, newBatches, activeUsers) VALUES (?, ?, ?, ?)', [d, comps, news, act]); } catch {}
+    }
+    return dayStrings.length;
+  };
+
+  // Simple JSON cache helpers for stats/compliance/doc-stats
+  const readJsonCache = (table) => {
+    try {
+      const row = one(`SELECT payload FROM ${table} WHERE id=1`);
+      if (row && row.payload) return JSON.parse(String(row.payload));
+    } catch {}
+    return null;
+  };
+  const writeJsonCache = (table, data) => {
+    try {
+      const payload = JSON.stringify(data || {});
+      db.run(
+        `INSERT INTO ${table} (id, payload, updatedAt) VALUES (1, ?, datetime('now'))
+         ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, updatedAt=excluded.updatedAt`,
+        [payload]
+      );
+    } catch {}
+  };
+
+  // Simple JSON cache helpers for stats/compliance/doc-stats
+  const readJsonCache = (table) => {
+    try {
+      const row = one(`SELECT payload FROM ${table} WHERE id=1`);
+      if (row && row.payload) return JSON.parse(String(row.payload));
+    } catch {}
+    return null;
+  };
+  const writeJsonCache = (table, data) => {
+    try {
+      const payload = JSON.stringify(data || {});
+      db.run(
+        `INSERT INTO ${table} (id, payload, updatedAt) VALUES (1, ?, datetime('now'))
+         ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, updatedAt=excluded.updatedAt`,
+        [payload]
+      );
+    } catch {}
+  };
+
   // Settings helpers (simple key/value via app_settings) - defined early for use in downstream middleware/routes
   const getSetting = (k, fallback = null) => {
     try {
@@ -4281,6 +4362,9 @@ async function start() {
   app.get('/api/stats', async (req, res) => {
     const filters = [];
     const params = [];
+    // Guardrails for RTDB: defaults capped
+    const limitTrend = Math.max(1, Math.min(Number(req.query.limit || 30), 60));
+    const windowDays = Math.max(1, Math.min(Number(req.query.windowDays || 30), 90));
     const hasFilters = () => filters.length > 0;
     if (req.query.businessId) {
       filters.push('r.businessId = ?');
@@ -4298,6 +4382,10 @@ async function start() {
     const isFirebase = db && (db.driver === 'firebase' || db.driver === 'rtdb');
 
     if (isFirebase) {
+      if (!hasFilters()) {
+        const cached = readJsonCache('stats_cache');
+        if (cached) return res.json(cached);
+      }
       // Fetch tables and compute in JS
       const [recRowsMaybe, ackRowsMaybe, batchRowsMaybe, docsRowsMaybe] = [
         all('SELECT id, batchId, businessId, email, department, primaryGroup FROM recipients'),
@@ -4374,7 +4462,7 @@ async function start() {
       const activeBatches = new Set(
         recipients.map((r) => String(r.batchId)).filter((id) => activeBatchIds.has(id))
       ).size;
-      return res.json({
+      const payload = {
         totalBatches,
         activeBatches,
         totalUsers: totalRecipients,
@@ -4382,7 +4470,9 @@ async function start() {
         completionRate,
         overdueBatches: 0,
         avgCompletionTime: 0,
-      });
+      };
+      if (!hasFilters()) writeJsonCache('stats_cache', payload);
+      return res.json(payload);
     }
 
     // Default (SQL) path
@@ -5680,8 +5770,12 @@ async function start() {
 
   // Compliance breakdown by department (supports filters)
   app.get('/api/compliance', async (req, res) => {
+    // Guardrails for RTDB: default to modest page size
+    const limitComp = Math.max(1, Math.min(Number(req.query.limit || 100), 500));
+    const offsetComp = Math.max(0, Number(req.query.offset || 0));
     const filters = [];
     const params = [];
+    const hasFilters = () => filters.length > 0;
     const bizExpr = 'COALESCE(r.businessId, ub.businessId)';
     if (req.query.businessId) {
       filters.push(`${bizExpr} = ?`);
@@ -5698,6 +5792,10 @@ async function start() {
     const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
     const isFirebase = db && (db.driver === 'firebase' || db.driver === 'rtdb');
     if (isFirebase) {
+      if (!hasFilters()) {
+        const cached = readJsonCache('compliance_cache');
+        if (cached) return res.json(cached.slice(offsetComp, offsetComp + limitComp));
+      }
       const [recRowsMaybe, ackRowsMaybe, docsRowsMaybe, bizRowsMaybe, userBizMaybe] = [
         all('SELECT department, businessId, email, batchId FROM recipients'),
         all('SELECT batchId, email, acknowledged, documentId FROM acks'),
@@ -5809,6 +5907,7 @@ async function start() {
           completionRate,
         };
       });
+      if (!hasFilters()) writeJsonCache('compliance_cache', rows);
       return res.json(rows);
     }
 
@@ -5908,16 +6007,18 @@ async function start() {
           .includes(qComp)
       );
     }
-    const limitComp = Math.max(1, Math.min(Number(req.query.limit || 100), 1000));
-    const offsetComp = Math.max(0, Number(req.query.offset || 0));
     const pagedComp = rows.slice(offsetComp, offsetComp + limitComp);
     res.json(pagedComp);
   });
 
   // Document performance stats (supports filters)
   app.get('/api/doc-stats', async (req, res) => {
+    // Guardrails for RTDB: default to modest page size
+    const limitDocs = Math.max(1, Math.min(Number(req.query.limit || 100), 500));
+    const offsetDocs = Math.max(0, Number(req.query.offset || 0));
     const filters = [];
     const params = [];
+    const hasFilters = () => filters.length > 0;
     if (req.query.businessId) {
       filters.push('r.businessId = ?');
       params.push(Number(req.query.businessId));
@@ -5933,6 +6034,25 @@ async function start() {
     const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
     const isFirebase = db && (db.driver === 'firebase' || db.driver === 'rtdb');
     if (isFirebase) {
+      if (!hasFilters()) {
+        const cached = readJsonCache('doc_stats_cache');
+        if (cached) {
+          const qDocs = String(req.query.q || '').toLowerCase().trim();
+          let out = Array.isArray(cached) ? cached : [];
+          if (qDocs) {
+            out = out.filter(
+              (r) =>
+                String(r.documentName || '')
+                  .toLowerCase()
+                  .includes(qDocs) ||
+                String(r.batchName || '')
+                  .toLowerCase()
+                  .includes(qDocs)
+            );
+          }
+          return res.json(out.slice(offsetDocs, offsetDocs + limitDocs));
+        }
+      }
       const [docsMaybe, recsMaybe, acksMaybe, batchesMaybe] = [
         all('SELECT id, title, batchId FROM documents'),
         all('SELECT id, batchId, businessId, email, department, primaryGroup FROM recipients'),
@@ -6054,9 +6174,8 @@ async function start() {
             .includes(qDocs)
       );
     }
-    const limitDocs = Math.max(1, Math.min(Number(req.query.limit || 100), 500));
-    const offsetDocs = Math.max(0, Number(req.query.offset || 0));
     const pagedDocs = out.slice(offsetDocs, offsetDocs + limitDocs);
+    if (!hasFilters()) writeJsonCache('doc_stats_cache', out);
     res.json(pagedDocs);
   });
 
@@ -6064,6 +6183,8 @@ async function start() {
   app.get('/api/trends', async (req, res) => {
     const filters = [];
     const params = [];
+    const limitTrend = Math.max(1, Math.min(Number(req.query.limit || 30), 60));
+    const windowDays = Math.max(1, Math.min(Number(req.query.windowDays || 30), 90));
     if (req.query.businessId) {
       filters.push('r.businessId = ?');
       params.push(Number(req.query.businessId));
@@ -6083,10 +6204,10 @@ async function start() {
       `SELECT substr(a.ackDate,1,10) as date, COUNT(*) as cnt
        FROM acks a
        ${filters.length ? 'JOIN recipients r ON r.batchId=a.batchId AND LOWER(r.email)=LOWER(a.email)' : ''}
-       ${filters.length ? where + ' AND ' : 'WHERE '} a.ackDate >= date('now','-29 day')
+       ${filters.length ? where + ' AND ' : 'WHERE '} a.ackDate >= date('now', ?)
        GROUP BY substr(a.ackDate,1,10)
        ORDER BY date`,
-      params
+      [...params, `-${windowDays - 1} day`]
     );
     // New batches per day (use startDate as proxy)
     let newBatches = [];
@@ -6095,18 +6216,19 @@ async function start() {
         `SELECT b.startDate as date, COUNT(DISTINCT b.id) as cnt
          FROM batches b
          JOIN recipients r ON r.batchId=b.id
-         ${where} AND b.startDate IS NOT NULL AND b.startDate >= date('now','-29 day')
+         ${where} AND b.startDate IS NOT NULL AND b.startDate >= date('now', ?)
          GROUP BY b.startDate
          ORDER BY b.startDate`,
-        params
+        [...params, `-${windowDays - 1} day`]
       );
     } else {
       newBatches = all(
         `SELECT startDate as date, COUNT(*) as cnt
          FROM batches
-         WHERE startDate IS NOT NULL AND startDate >= date('now','-29 day')
+         WHERE startDate IS NOT NULL AND startDate >= date('now', ?)
          GROUP BY startDate
-         ORDER BY startDate`
+         ORDER BY startDate`,
+        [`-${windowDays - 1} day`]
       );
     }
     // Active users per day (distinct emails with acks)
@@ -6114,15 +6236,15 @@ async function start() {
       `SELECT substr(a.ackDate,1,10) as date, COUNT(DISTINCT LOWER(a.email)) as cnt
        FROM acks a
        ${filters.length ? 'JOIN recipients r ON r.batchId=a.batchId AND LOWER(r.email)=LOWER(a.email)' : ''}
-       ${filters.length ? where + ' AND ' : 'WHERE '} a.ackDate >= date('now','-29 day')
+       ${filters.length ? where + ' AND ' : 'WHERE '} a.ackDate >= date('now', ?)
        GROUP BY substr(a.ackDate,1,10)
        ORDER BY date`,
-      params
+      [...params, `-${windowDays - 1} day`]
     );
 
     // Normalize to last 30 days, fill zeros for missing days
-    const days = Array.from({ length: 30 }, (_, i) =>
-      new Date(Date.now() - (29 - i) * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+    const days = Array.from({ length: windowDays }, (_, i) =>
+      new Date(Date.now() - (windowDays - 1 - i) * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
     );
     const toArray = (x) => (Array.isArray(x) ? x : []);
     const mapRows = (rows) => {
@@ -6140,11 +6262,22 @@ async function start() {
         : activeUsersMaybe || [];
     if (newBatches && typeof newBatches.then === 'function') newBatches = await newBatches;
     const series = {
-      completions: mapRows(completions),
-      newBatches: mapRows(newBatches),
-      activeUsers: mapRows(activeUsers),
+      completions: mapRows(completions).slice(-limitTrend),
+      newBatches: mapRows(newBatches).slice(-limitTrend),
+      activeUsers: mapRows(activeUsers).slice(-limitTrend),
     };
     res.json(series);
+  });
+
+  // Admin: rebuild trends cache
+  app.post('/api/admin/trends/rebuild', async (req, res) => {
+    try {
+      const days = Math.max(1, Math.min(Number(req.body?.days || req.query?.days || 30) || 30, 90));
+      const rows = await rebuildTrendsCache(days);
+      res.json({ ok: true, windowDays: days, rows });
+    } catch (e) {
+      res.status(500).json({ error: 'rebuild_failed' });
+    }
   });
 
   // Recipients listing with optional filters for analytics filter panels
@@ -6265,7 +6398,8 @@ async function start() {
   // Detailed acknowledgement report (business + user + batch + document)
   app.get('/api/ack-report', async (req, res) => {
     try {
-      const limit = Math.max(1, Math.min(Number(req.query.limit || 1000), 5000));
+      // Clamp limits to protect RTDB from full scans
+      const limit = Math.max(1, Math.min(Number(req.query.limit || 500), 1000));
       const offset = Math.max(0, Number(req.query.offset || 0));
       const q = String(req.query.q || '').toLowerCase().trim();
       const filterBiz = req.query.businessId ? String(req.query.businessId) : null;
@@ -7449,6 +7583,8 @@ async function start() {
   app.get('/api/admin/acks/export', async (req, res) => {
     try {
       const isFirebase = db && (db.driver === 'firebase' || db.driver === 'rtdb');
+      // Guardrail: cap rows returned to avoid huge RTDB scans
+      const limit = Math.max(1, Math.min(Number(req.query.limit || 500), 1000));
       const year = String(req.query.year || '').trim();
       if (!/^\d{4}$/.test(year)) {
         const y = new Date().getUTCFullYear();
@@ -7537,7 +7673,7 @@ async function start() {
         rows.sort((x, y) =>
           x.acknowledgedAt < y.acknowledgedAt ? -1 : x.acknowledgedAt > y.acknowledgedAt ? 1 : 0
         );
-        return res.json({ records: rows });
+        return res.json({ records: rows.slice(0, limit), total: rows.length });
       }
 
       // SQL path
@@ -11304,6 +11440,17 @@ function bootstrapSchema(db) {
     tenant_id INTEGER PRIMARY KEY,
     theme_json TEXT,
     FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+  );`);
+  // Caches for analytics to reduce RTDB scans
+  db.run(`CREATE TABLE IF NOT EXISTS stats_cache (id INTEGER PRIMARY KEY CHECK (id=1), payload TEXT, updatedAt TEXT);`);
+  db.run(`CREATE TABLE IF NOT EXISTS compliance_cache (id INTEGER PRIMARY KEY CHECK (id=1), payload TEXT, updatedAt TEXT);`);
+  db.run(`CREATE TABLE IF NOT EXISTS doc_stats_cache (id INTEGER PRIMARY KEY CHECK (id=1), payload TEXT, updatedAt TEXT);`);
+ // Daily trends cache for analytics (reduces RTDB scans)
+ db.run(`CREATE TABLE IF NOT EXISTS trends_daily (
+    date TEXT PRIMARY KEY,
+    completions INTEGER,
+    newBatches INTEGER,
+    activeUsers INTEGER
   );`);
   // Customization requests (like WordPress site custom requests)
   db.run(`CREATE TABLE IF NOT EXISTS customization_requests (
