@@ -457,25 +457,6 @@ async function start() {
     } catch {}
   };
 
-  // Simple JSON cache helpers for stats/compliance/doc-stats
-  const readJsonCache = (table) => {
-    try {
-      const row = one(`SELECT payload FROM ${table} WHERE id=1`);
-      if (row && row.payload) return JSON.parse(String(row.payload));
-    } catch {}
-    return null;
-  };
-  const writeJsonCache = (table, data) => {
-    try {
-      const payload = JSON.stringify(data || {});
-      db.run(
-        `INSERT INTO ${table} (id, payload, updatedAt) VALUES (1, ?, datetime('now'))
-         ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, updatedAt=excluded.updatedAt`,
-        [payload]
-      );
-    } catch {}
-  };
-
   // Settings helpers (simple key/value via app_settings) - defined early for use in downstream middleware/routes
   const getSetting = (k, fallback = null) => {
     try {
